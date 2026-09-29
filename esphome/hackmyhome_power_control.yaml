@@ -1,0 +1,4691 @@
+# ===============================================================
+# HackMyHome / Power Control 0.22.4 - Waveshare Knob Touch LCD 1.8
+# SOLO Power Control: Home / Elettrodomestici / Priorita / Colori / OTA
+# AUTO DISTACCO: inizialmente DISABILITATO. Per abilitarlo usare la pagina
+# IMPOSTAZIONI; non usare per carichi essenziali, critici o non interrompibili.
+# ===============================================================
+substitutions:
+  device_name: power-control
+  friendly_name: "Power Control"
+  fw_version: "0.22.4"
+  # Credenziali lette da secrets.yaml.
+  password: !secret wifi_password
+  api_key: !secret api_encryption_key
+  ssid: !secret wifi_ssid
+  # Rete in DHCP per impostazione predefinita.
+  # Adatta gli entity_id seguenti alla tua installazione Home Assistant.
+  power_sensor_entity: "sensor.potenza_rcb_somma_rcb0_rcb1"
+  power_home_name: "CONSUMO CASA"
+  power_limit_w: "3300"
+  power_warning_w: "2700"
+  power_critical_w: "3200"
+  # Rientro richiesto per riarmare la vibrazione dopo una soglia.
+  power_haptic_hysteresis_w: "100"
+  # APPRENDIMENTO: parametri fissi. La soglia minima e regolabile dal Knob in IMPOSTAZIONI.
+  learning_stability_w: "20"
+  learning_prompt_timeout_s: "120"
+  learning_cooldown_s: "120"
+  # 01 - Lavatrice
+  appliance_01_name: "Lavatrice"
+  appliance_01_sensor: "sensor.lavatrice_power_2"
+  appliance_01_switch: "switch.lavatrice_switch_1"
+  # 02 - Lavastoviglie
+  appliance_02_name: "Lavastoviglie"
+  appliance_02_sensor: "sensor.esphome_lavastoviglie_potenza"
+  appliance_02_switch: "switch.cucina_lavastoviglie_relay"
+  # 03 - Macchina caffe
+  appliance_03_name: "Macchina Caffe"
+  appliance_03_sensor: "sensor.macchina_caffe_potenza"
+  appliance_03_switch: "switch.macchina_caffe_interruttore"
+  # 04 - Forno elettrico
+  appliance_04_name: "Forno elettrico"
+  appliance_04_sensor: "sensor.smart_plug_power"
+  appliance_04_switch: "switch.smart_plug_socket_1"
+  # 05 - Colonna Camera
+  appliance_05_name: "Colonna Camera"
+  appliance_05_sensor: "sensor.esphome_colonna_camera_potenza"
+  appliance_05_switch: "switch.esphome_colonna_camera_relay"
+  # 06 - Colonna Cameretta
+  appliance_06_name: "Colonna Cameretta"
+  appliance_06_sensor: "sensor.esphome_colonna_cameretta_potenza"
+  appliance_06_switch: "switch.esphome_colonna_cameretta_relay"
+  # 07 - Colonna Cucina
+  appliance_07_name: "Colonna Cucina"
+  appliance_07_sensor: "sensor.esphome_colonna_cucina_potenza"
+  appliance_07_switch: "switch.esphome_colonna_cucina_stato_relay"
+  # 08 - Colonna Sala
+  appliance_08_name: "Colonna Sala"
+  appliance_08_sensor: "sensor.esphome_colonna_sala_potenza"
+  appliance_08_switch: "switch.esphome_colonna_sala_relay"
+  # 09 - Condizionatore Cucina
+  appliance_09_name: "Condizionatore Cucina"
+  appliance_09_sensor: "sensor.condizionatore_cucina_consumo_immediato"
+  appliance_09_switch: "climate.condizionatore_cucina"
+  # 10 - Condizionatore Sala
+  appliance_10_name: "Condizionatore Sala"
+  appliance_10_sensor: "sensor.condizionatore_sala_consumo_immediato"
+  appliance_10_switch: "climate.condizionatore_sala"
+  # 11 - Apple iMac
+  appliance_11_name: "Apple iMac"
+  appliance_11_sensor: "sensor.imac_potenza"
+  appliance_11_switch: "switch.imac"
+  # 12 - Colonna Rete
+  appliance_12_name: "Colonna Rete"
+  appliance_12_sensor: "sensor.rete_potenza"
+  appliance_12_switch: "switch.rete_presa"
+  # 13 - Frigorifero
+  appliance_13_name: "Frigorifero"
+  appliance_13_sensor: "sensor.frigorifero_power"
+  appliance_13_switch: "switch.frigorifero"
+  # 14 - Personalizzato 1
+  appliance_14_name: "Personalizzato 1"
+  appliance_14_sensor: "sensor.pc_non_configurato_14"
+  appliance_14_switch: "switch.pc_non_configurato_14"
+
+  lcd_clk: GPIO13
+  lcd_cs: GPIO14
+  lcd_d0: GPIO15
+  lcd_d1: GPIO16
+  lcd_d2: GPIO17
+  lcd_d3: GPIO18
+  lcd_reset: GPIO21
+  lcd_backlight: GPIO47
+  touch_sda: GPIO11
+  touch_scl: GPIO12
+  touch_int: GPIO9
+  touch_reset: GPIO10
+  battery_adc_pin: GPIO1
+  encoder_a: GPIO8
+  encoder_b: GPIO7
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: "HackMyHome Power Control 0.22 - AUTO + Apprendimento locale"
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          // Una sola volta: nella v0.20 CLIMA AUTO poteva vietare
+          // i climatizzatori anche se il loro Axx era ON. Non ampliare
+          // i permessi senza un nuovo SI esplicito nella lista DISTACCO.
+          if (!id(pc_upgrade_021_done)) {
+            // Modifica della logica AUTO/NO AUTO: richiede nuova abilitazione
+            // generale da IMPOSTAZIONI dopo avere verificato la lista.
+            id(pc_auto_enabled)=0;
+            id(pc_auto_mode)=0;
+            if (!id(pc_auto_climate)) {
+              if (strncmp("${appliance_01_switch}", "climate.", 8)==0) id(pc_auto_allow_01)=0;
+              if (strncmp("${appliance_02_switch}", "climate.", 8)==0) id(pc_auto_allow_02)=0;
+              if (strncmp("${appliance_03_switch}", "climate.", 8)==0) id(pc_auto_allow_03)=0;
+              if (strncmp("${appliance_04_switch}", "climate.", 8)==0) id(pc_auto_allow_04)=0;
+              if (strncmp("${appliance_05_switch}", "climate.", 8)==0) id(pc_auto_allow_05)=0;
+              if (strncmp("${appliance_06_switch}", "climate.", 8)==0) id(pc_auto_allow_06)=0;
+              if (strncmp("${appliance_07_switch}", "climate.", 8)==0) id(pc_auto_allow_07)=0;
+              if (strncmp("${appliance_08_switch}", "climate.", 8)==0) id(pc_auto_allow_08)=0;
+              if (strncmp("${appliance_09_switch}", "climate.", 8)==0) id(pc_auto_allow_09)=0;
+              if (strncmp("${appliance_10_switch}", "climate.", 8)==0) id(pc_auto_allow_10)=0;
+              if (strncmp("${appliance_11_switch}", "climate.", 8)==0) id(pc_auto_allow_11)=0;
+              if (strncmp("${appliance_12_switch}", "climate.", 8)==0) id(pc_auto_allow_12)=0;
+              if (strncmp("${appliance_13_switch}", "climate.", 8)==0) id(pc_auto_allow_13)=0;
+              if (strncmp("${appliance_14_switch}", "climate.", 8)==0) id(pc_auto_allow_14)=0;
+            }
+            id(pc_upgrade_021_done)=1;
+          }
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+wifi:
+  id: pc_wifi
+  ssid: ${ssid}
+  password: ${password}
+  reboot_timeout: 10min
+  # Se usi IP statico, imposta IP e gateway nella STESSA sottorete.
+  # manual_ip:
+  #   static_ip: 192.168.1.91
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+
+preferences:
+  # Le priorita' vengono cambiate solo dopo 3s di inattivita'.
+  # Quindi non scriviamo in flash a ogni scatto della manopola.
+  flash_write_interval: 0s
+
+logger:
+  level: WARN
+
+api:
+  id: pc_api
+  encryption:
+    key: ${api_key}
+  on_client_connected:
+    then:
+      - lambda: 'id(pc_dirty) = true;'
+
+ota:
+  - platform: esphome
+    # OTA crittografato: usa la chiave gia impostata in api.encryption.key.
+    encryption:
+    on_begin:
+      then:
+        - lambda: |-
+            id(pc_ota) = true;
+            id(pc_auto_mode) = 0;
+            id(pc_auto_overlay_open) = false;
+            id(pc_boot_active) = false;  // Durante OTA nessun ticker o polling boot.
+            id(pc_ota_error) = false;
+            id(pc_ota_percent) = -1;
+        - lvgl.page.show:
+            id: ota_page
+            animation: NONE
+        - lambda: |-
+            lv_label_set_text(id(ota_status), "AGGIORNAMENTO OTA");
+            lv_label_set_text(id(ota_percent_label), "0%");
+            lv_bar_set_value(id(ota_bar), 0, LV_ANIM_OFF);
+            lv_refr_now(NULL);
+    on_progress:
+      then:
+        - lambda: |-
+            // Refresh immediato: durante OTA il loop normale e' bloccato.
+            // Non fare operazioni grafiche pesanti a ogni pacchetto.
+            int pct = (int) fmaxf(0.0f, fminf(100.0f, x));
+            if (pct == id(pc_ota_percent) ||
+                (pct < 100 && pct < id(pc_ota_percent) + 5)) return;
+            id(pc_ota_percent) = pct;
+            lv_bar_set_value(id(ota_bar), pct, LV_ANIM_OFF);
+            char msg[8]; snprintf(msg, sizeof(msg), "%d%%", pct);
+            lv_label_set_text(id(ota_percent_label), msg);
+            lv_refr_now(NULL);
+    on_end:
+      then:
+        - lambda: |-
+            lv_bar_set_value(id(ota_bar), 100, LV_ANIM_OFF);
+            lv_label_set_text(id(ota_percent_label), "100%");
+            lv_label_set_text(id(ota_status), "COMPLETATO");
+            lv_refr_now(NULL);
+            // ESPHome gestisce il riavvio dopo OTA riuscito.
+    on_error:
+      then:
+        - lambda: |-
+            id(pc_ota_error) = true;
+            id(pc_ota_failed_ms) = millis();
+            lv_label_set_text(id(ota_status), "ERRORE OTA");
+            lv_refr_now(NULL);
+            // Rientro automatico gestito da interval, senza delay bloccanti.
+
+safe_mode:
+
+captive_portal:
+
+# Il Knob dispone del DRV2605 (I2C 0x5A); usa il driver del firmware originale.
+# Il componente esterno viene scaricato durante la compilazione ESPHome.
+external_components:
+  - source: github://RAR/esphome-drv2605
+    components: [drv2605]
+    refresh: 1d
+
+i2c:
+  id: i2c_bus
+  sda: ${touch_sda}
+  scl: ${touch_scl}
+  scan: false
+  frequency: 400kHz
+
+# Attuatore aptico integrato nel Waveshare, sullo stesso bus del touch.
+# Configurazione LRA e libreria 6 gia' usata nel firmware originale.
+drv2605:
+  id: pc_haptic_driver
+  i2c_id: i2c_bus
+  address: 0x5A
+  motor_type: LRA
+  library: 6
+
+spi:
+  id: display_qspi
+  type: quad
+  clk_pin: ${lcd_clk}
+  data_pins:
+    - ${lcd_d0}
+    - ${lcd_d1}
+    - ${lcd_d2}
+    - ${lcd_d3}
+
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: JC3636W518V2
+    spi_id: display_qspi
+    bus_mode: quad
+    cs_pin: ${lcd_cs}
+    reset_pin: ${lcd_reset}
+    data_rate: 80MHz
+    color_order: rgb
+    invert_colors: true
+    rotation: 0
+    auto_clear_enabled: false
+    update_interval: never
+    dimensions:
+      width: 360
+      height: 360
+
+touchscreen:
+  - platform: cst816
+    id: knob_touch
+    display: main_display
+    i2c_id: i2c_bus
+    interrupt_pin: ${touch_int}
+    reset_pin: ${touch_reset}
+    transform:
+      mirror_x: false
+      mirror_y: false
+      swap_xy: false
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: ${lcd_backlight}
+    frequency: 1000Hz
+light:
+  - platform: monochromatic
+    id: display_backlight
+    name: "${friendly_name} Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0ms
+
+globals:
+  # Soglia persistente: solo gli AUMENTI di Altri (non il suo valore assoluto).
+  # Modificabile nella pagina IMPOSTAZIONI; default 50 W, range 10..500, step 5 W.
+  - id: pc_learn_min_rise_w
+    type: int
+    restore_value: yes
+    initial_value: "50"
+  # I profili sono solo diagnostici: MAI usati per comandare il distacco.
+  # Chiave = (indice elettrodomestico + 1)*100 + indice modalita + 1.
+  - id: pc_learn_keys
+    type: std::array<int, 32>
+    restore_value: yes
+    initial_value: 'std::array<int, 32>{}'
+  - id: pc_learn_means
+    type: std::array<float, 32>
+    restore_value: yes
+    initial_value: 'std::array<float, 32>{}'
+  - id: pc_learn_counts
+    type: std::array<int, 32>
+    restore_value: yes
+    initial_value: 'std::array<int, 32>{}'
+  - id: pc_learn_base
+    type: float
+    initial_value: '0.0f'
+  - id: pc_learn_base_ready
+    type: bool
+    initial_value: 'false'
+  - id: pc_learn_streak
+    type: int
+    initial_value: '0'
+  - id: pc_learn_first_delta
+    type: float
+    initial_value: '0.0f'
+  - id: pc_learn_candidate_w
+    type: float
+    initial_value: '0.0f'
+  - id: pc_learn_pending
+    type: bool
+    initial_value: 'false'
+  - id: pc_learn_new_prompt
+    type: bool
+    initial_value: 'false'
+  - id: pc_learn_since_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pc_learn_cooldown_until_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pc_learn_last_sample_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pc_learn_last_publish_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pc_learn_last_key
+    type: int
+    initial_value: '0'
+  - id: pc_learn_last_confirm_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pc_learn_last_confirm_w
+    type: float
+    initial_value: '0.0f'
+  - id: pc_learn_device_idx
+    type: int
+    initial_value: '0'
+  - id: pc_learn_mode_idx
+    type: int
+    initial_value: '0'
+  - id: pc_learn_mode_count
+    type: int
+    initial_value: '7'
+  - id: pc_learn_edit_stage
+    type: int
+    initial_value: '0'
+  # -1: primo valore non ancora acquisito. Le altre zone sono
+  # 0=normale, 1=attenzione, 2=critica. Nessun avviso sul primo dato.
+  - id: pc_haptic_zone
+    type: int
+    initial_value: "-1"
+  # 0=nessun impulso; 1=breve; 2=doppio. Transitorio, NON persistente.
+  - id: pc_haptic_event
+    type: int
+    initial_value: "0"
+  - id: pc_dirty
+    type: bool
+    initial_value: "true"
+  - id: pc_ota
+    type: bool
+    initial_value: "false"
+  - id: pc_ota_error
+    type: bool
+    initial_value: "false"
+  - id: pc_ota_percent
+    type: int
+    initial_value: "-1"
+  - id: pc_ota_failed_ms
+    type: uint32_t
+    initial_value: "0"
+  # BOOT: progresso legato a Wi-Fi, sessione API con stati e primo valore HA.
+  # Se HA non risponde, dopo 30s entra comunque nella Home (modalita' offline).
+  - id: pc_boot_active
+    type: bool
+    initial_value: "true"
+  - id: pc_boot_ui_ready
+    type: bool
+    initial_value: "false"
+  - id: pc_boot_start_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_boot_ready_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_boot_ticker_x
+    type: int
+    initial_value: "320"
+  - id: pc_boot_progress_last
+    type: int
+    initial_value: "-1"
+  - id: pc_boot_step_last
+    type: int
+    initial_value: "-1"
+  - id: pc_boot_handoff_pending
+    type: bool
+    initial_value: "false"
+  # Cache per evitare di ridisegnare la barra di stato se i valori sono invariati.
+  - id: pc_status_battery_last
+    type: int
+    initial_value: "-999"
+  - id: pc_status_wifi_last
+    type: int
+    initial_value: "-999"
+  - id: pc_status_bars_last
+    type: int
+    initial_value: "-1"
+  - id: pc_status_ha_last
+    type: int
+    initial_value: "-1"
+  # 0=Home, 1=Distacco, 2=Elettrodomestici, 3=Colori, 4=Impostazioni, 5=Conferma
+  - id: pc_page
+    type: int
+    initial_value: "0"
+  - id: pc_selected
+    type: int
+    initial_value: "0"
+  # False = Home mostra automaticamente il carico attivo maggiore.
+  # True = Home mantiene la selezione esplicita finche' il dispositivo e' attivo.
+  - id: pc_home_selection_explicit
+    type: bool
+    initial_value: "false"
+  # Selezione del segmento grigio: NON e' uno slot e non puo' ricevere ON/OFF.
+  # pc_selected rimane sempre un indice valido di elettrodomestico (0..13).
+  - id: pc_home_other_selected
+    type: bool
+    initial_value: "false"
+  # Stato lista priorita': ordine provvisorio (solo dispositivi configurati e comandabili).
+  # La variabile NON e' persistente: i singoli pc_priority_XX lo sono gia'.
+  - id: pc_prio_order
+    type: std::vector<int>
+    initial_value: "std::vector<int>{}"
+  - id: pc_prio_cursor
+    type: int
+    initial_value: "0"
+  - id: pc_prio_top
+    type: int
+    initial_value: "0"
+  # -1: ruotare scorre la lista; >=0: lo slot selezionato si sposta.
+  - id: pc_prio_edit_slot
+    type: int
+    initial_value: "-1"
+  - id: pc_prio_pending
+    type: bool
+    initial_value: "false"
+  - id: pc_prio_last_move_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_prio_saved_ms
+    type: uint32_t
+    initial_value: "0"
+  # Conferma esplicita di esclusione/riabilitazione (mai per timeout).
+  # 0=nessuna, 1=escludi (NO AUTO), 2=riabilita (AUTO).
+  - id: pc_prio_prompt_mode
+    type: int
+    initial_value: "0"
+  - id: pc_prio_prompt_slot
+    type: int
+    initial_value: "-1"
+  - id: pc_prio_prompt_since_ms
+    type: uint32_t
+    initial_value: "0"
+  # Setup colori: elenco alfabetico di TUTTI gli slot con sensore configurato.
+  # Colore provvisorio separato dai pc_color_XX persistenti: commit dopo 3s.
+  - id: pc_color_order
+    type: std::vector<int>
+    initial_value: "std::vector<int>{}"
+  - id: pc_color_cursor
+    type: int
+    initial_value: "0"
+  - id: pc_color_top
+    type: int
+    initial_value: "0"
+  - id: pc_color_edit_slot
+    type: int
+    initial_value: "-1"
+  - id: pc_color_draft
+    type: int
+    initial_value: "0"
+  - id: pc_color_pending
+    type: bool
+    initial_value: "false"
+  - id: pc_color_last_move_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_color_saved_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_last_knob_ms
+    type: uint32_t
+    initial_value: "0"
+  # Ritorno Home dopo 60s senza touch, swipe o rotazione (mai durante OTA/boot).
+  - id: pc_last_activity_ms
+    type: uint32_t
+    initial_value: "0"
+  # Distacco: impostazioni persistenti, inizialmente INATTIVO.
+  - id: pc_auto_enabled
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_yellow
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_red
+    type: int
+    restore_value: yes
+    initial_value: "1"
+  - id: pc_auto_delay_s
+    type: int
+    restore_value: yes
+    initial_value: "5"
+  - id: pc_auto_confirm_s
+    type: int
+    restore_value: yes
+    initial_value: "12"
+  - id: pc_auto_suspend_s
+    type: int
+    restore_value: yes
+    initial_value: "120"
+  - id: pc_auto_after_s
+    type: int
+    restore_value: yes
+    initial_value: "25"
+  # VECCHIA impostazione: solo per migrazione dei permessi climate.
+  - id: pc_auto_climate
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_upgrade_021_done
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_01
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_02
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_03
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_04
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_05
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_06
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_07
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_08
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_09
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_10
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_11
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_12
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_13
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_auto_allow_14
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  # Editor lista impostazioni e macchina a stati del distacco.
+  - id: pc_auto_cursor
+    type: int
+    initial_value: "0"
+  - id: pc_auto_top
+    type: int
+    initial_value: "0"
+  - id: pc_auto_edit
+    type: int
+    initial_value: "-1"
+  - id: pc_auto_draft
+    type: int
+    initial_value: "0"
+  - id: pc_auto_pending
+    type: bool
+    initial_value: "false"
+  - id: pc_auto_last_move_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_saved_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_mode
+    type: int
+    initial_value: "0"
+  - id: pc_auto_zone
+    type: int
+    initial_value: "0"
+  - id: pc_auto_zone_since_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_candidate
+    type: int
+    initial_value: "-1"
+  - id: pc_auto_deadline_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_suspended_until_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_post_until_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_overlay_open
+    type: bool
+    initial_value: "false"
+  - id: pc_auto_cancel_requested
+    type: bool
+    initial_value: "false"
+  - id: pc_auto_abort_overlay
+    type: bool
+    initial_value: "false"
+  - id: pc_auto_fire
+    type: bool
+    initial_value: "false"
+  - id: pc_auto_haptic_event
+    type: int
+    initial_value: "0"
+  - id: pc_auto_last_haptic_sec
+    type: int
+    initial_value: "-1"
+  - id: pc_auto_attempted_mask
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_last_power_data_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_last_data_at_command_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: pc_auto_last_command_slot
+    type: int
+    initial_value: "-1"
+  - id: pc_priority_01
+    type: int
+    restore_value: yes
+    initial_value: "1"
+  - id: pc_color_01
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: pc_priority_02
+    type: int
+    restore_value: yes
+    initial_value: "2"
+  - id: pc_color_02
+    type: int
+    restore_value: yes
+    initial_value: "1"
+  - id: pc_priority_03
+    type: int
+    restore_value: yes
+    initial_value: "3"
+  - id: pc_color_03
+    type: int
+    restore_value: yes
+    initial_value: "2"
+  - id: pc_priority_04
+    type: int
+    restore_value: yes
+    initial_value: "4"
+  - id: pc_color_04
+    type: int
+    restore_value: yes
+    initial_value: "3"
+  - id: pc_priority_05
+    type: int
+    restore_value: yes
+    initial_value: "5"
+  - id: pc_color_05
+    type: int
+    restore_value: yes
+    initial_value: "4"
+  - id: pc_priority_06
+    type: int
+    restore_value: yes
+    initial_value: "6"
+  - id: pc_color_06
+    type: int
+    restore_value: yes
+    initial_value: "5"
+  - id: pc_priority_07
+    type: int
+    restore_value: yes
+    initial_value: "7"
+  - id: pc_color_07
+    type: int
+    restore_value: yes
+    initial_value: "6"
+  - id: pc_priority_08
+    type: int
+    restore_value: yes
+    initial_value: "8"
+  - id: pc_color_08
+    type: int
+    restore_value: yes
+    initial_value: "7"
+  - id: pc_priority_09
+    type: int
+    restore_value: yes
+    initial_value: "9"
+  - id: pc_color_09
+    type: int
+    restore_value: yes
+    initial_value: "8"
+  - id: pc_priority_10
+    type: int
+    restore_value: yes
+    initial_value: "10"
+  - id: pc_color_10
+    type: int
+    restore_value: yes
+    initial_value: "9"
+  - id: pc_priority_11
+    type: int
+    restore_value: yes
+    initial_value: "11"
+  - id: pc_color_11
+    type: int
+    restore_value: yes
+    initial_value: "10"
+  - id: pc_priority_12
+    type: int
+    restore_value: yes
+    initial_value: "12"
+  - id: pc_color_12
+    type: int
+    restore_value: yes
+    initial_value: "11"
+  - id: pc_priority_13
+    type: int
+    restore_value: yes
+    initial_value: "13"
+  - id: pc_color_13
+    type: int
+    restore_value: yes
+    initial_value: "12"
+  - id: pc_priority_14
+    type: int
+    restore_value: yes
+    initial_value: "14"
+  - id: pc_color_14
+    type: int
+    restore_value: yes
+    initial_value: "13"
+
+# La lettura e' nativa: nessuna automazione HA che spinge continuamente W.
+sensor:
+  # Il valore e' pubblicato DALLO STESSO CALCOLO che disegna il segmento Altri.
+  - platform: template
+    id: pc_other_w
+    name: "Power Control Potenza Altri"
+    icon: mdi:flash-outline
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: never
+  # Lettura batteria gia' utilizzata nel firmware hardware originale del Knob.
+  # GPIO1 misura la tensione attraverso un partitore: tensione batteria = ADC * 2.
+  - platform: adc
+    id: pc_battery_voltage
+    pin: ${battery_adc_pin}
+    attenuation: 12db
+    update_interval: 30s
+    internal: true
+    filters:
+      - multiply: 2.0
+      - median:
+          window_size: 5
+          send_every: 1
+          send_first_at: 1
+
+  # Percentuale indicativa LiPo 1S, non e' una misura del livello di carica esatto.
+  - platform: template
+    id: pc_battery_percent
+    name: "${friendly_name} Batteria"
+    device_class: battery
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      const float v = id(pc_battery_voltage).state;
+      if (!std::isfinite(v)) return NAN;
+      return fmaxf(0.0f, fminf(100.0f, (v - 3.0f) * (100.0f / 1.2f)));
+
+  - platform: wifi_signal
+    id: pc_wifi_rssi
+    internal: true
+    update_interval: 15s
+
+  - platform: homeassistant
+    id: pc_home_w
+    entity_id: ${power_sensor_entity}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true; id(pc_auto_last_power_data_ms) = millis();'
+        - script.execute: pc_haptic_check
+  - platform: homeassistant
+    id: pc_w_01
+    entity_id: ${appliance_01_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_02
+    entity_id: ${appliance_02_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_03
+    entity_id: ${appliance_03_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_04
+    entity_id: ${appliance_04_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_05
+    entity_id: ${appliance_05_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_06
+    entity_id: ${appliance_06_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_07
+    entity_id: ${appliance_07_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_08
+    entity_id: ${appliance_08_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_09
+    entity_id: ${appliance_09_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_10
+    entity_id: ${appliance_10_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_11
+    entity_id: ${appliance_11_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_12
+    entity_id: ${appliance_12_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_13
+    entity_id: ${appliance_13_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_w_14
+    entity_id: ${appliance_14_sensor}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+
+# Stato nativo delle entita' di comando (tutti e 14 gli slot).
+# Il segnaposto switch.pc_non_configurato_XX e' trattato come NESSUN
+# controllo: Home mostra lo slot se i watt sono > 0; i pulsanti non lo chiamano.
+# Unico interruttore esposto a HA per fermare la raccolta, nessun comando a carichi.
+switch:
+  - platform: template
+    id: pc_learn_enabled
+    name: "Power Control Apprendimento"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    icon: mdi:brain
+
+text_sensor:
+  - platform: template
+    id: pc_learn_status
+    name: "Power Control Ultimo Apprendimento"
+    update_interval: never
+  - platform: homeassistant
+    id: pc_control_state_01
+    entity_id: ${appliance_01_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_02
+    entity_id: ${appliance_02_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_03
+    entity_id: ${appliance_03_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_04
+    entity_id: ${appliance_04_switch}    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_05
+    entity_id: ${appliance_05_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_06
+    entity_id: ${appliance_06_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_07
+    entity_id: ${appliance_07_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_08
+    entity_id: ${appliance_08_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_09
+    entity_id: ${appliance_09_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_10
+    entity_id: ${appliance_10_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_11
+    entity_id: ${appliance_11_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_12
+    entity_id: ${appliance_12_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_13
+    entity_id: ${appliance_13_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+  - platform: homeassistant
+    id: pc_control_state_14
+    entity_id: ${appliance_14_switch}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(pc_dirty) = true;'
+# Stessi pin e stesso schema "evento A / evento B" del firmware precedente.
+binary_sensor:
+  - platform: gpio
+    id: pc_encoder_a
+    internal: true
+    pin:
+      number: ${encoder_a}
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - script.execute:
+            id: pc_rotate
+            delta: 1
+  - platform: gpio
+    id: pc_encoder_b
+    internal: true
+    pin:
+      number: ${encoder_b}
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - script.execute:
+            id: pc_rotate
+            delta: -1
+
+script:
+  # 5 s: usa SOLO il valore Altri calcolato nell'originale pc_refresh.
+  # Una richiesta viene fatta solo dopo due misure abbastanza stabili.
+  - id: pc_learn_tick
+    mode: single
+    then:
+      - lambda: |-
+          const uint32_t now=millis();
+          id(pc_learn_new_prompt)=false;
+          if (id(pc_ota) || id(pc_boot_active) || !id(pc_learn_enabled).state ||
+              !id(pc_wifi).is_connected() ||
+              !id(pc_api).is_connected_with_state_subscription() ||
+              id(pc_auto_last_power_data_ms)==0 ||
+              (uint32_t)(now-id(pc_auto_last_power_data_ms))>20000u ||
+              !std::isfinite(id(pc_other_w).state)) {
+            id(pc_learn_streak)=0;
+            id(pc_learn_base_ready)=false;
+            return;
+          }
+          const float w=id(pc_other_w).state;
+          if (w<0.0f) return;
+          if (id(pc_learn_pending)) {
+            // La domanda non sparisce se il forno disattiva la resistenza.
+            return;
+          }
+          // L'aggiornamento dei dati totali e' l'unica sorgente di freschezza.
+          if (id(pc_learn_last_sample_ms)==id(pc_auto_last_power_data_ms)) return;
+          id(pc_learn_last_sample_ms)=id(pc_auto_last_power_data_ms);
+          if (!id(pc_learn_base_ready)) {
+            id(pc_learn_base)=w;
+            id(pc_learn_base_ready)=true;
+            return;  // Mai creare una domanda sulla prima misura dopo il boot.
+          }
+          if (id(pc_auto_mode)==2 || id(pc_page)==5 || id(pc_page)==6 ||
+              !(id(pc_page)==0 || id(pc_page)==2)) return;
+          const float threshold=(float)id(pc_learn_min_rise_w);
+          const float delta=w-id(pc_learn_base);
+          if (delta<threshold) {
+            id(pc_learn_streak)=0;
+            // Rientro rapido sul carico di base; adattamento lento al rumore.
+            if (w<id(pc_learn_base)-25.0f) id(pc_learn_base)=w;
+            else id(pc_learn_base)=0.85f*id(pc_learn_base)+0.15f*w;
+            return;
+          }
+          if ((int32_t)(now-id(pc_learn_cooldown_until_ms))<0) return;
+          if (id(pc_learn_streak)==0) {
+            id(pc_learn_streak)=1;
+            id(pc_learn_first_delta)=delta;
+            return;
+          }
+          if (fabsf(delta-id(pc_learn_first_delta)) >
+              fmaxf((float)${learning_stability_w},0.18f*id(pc_learn_first_delta))) {
+            id(pc_learn_first_delta)=delta;
+            id(pc_learn_streak)=1;
+            return;
+          }
+          // Per piccoli carichi (luci, standby) richiedi tre misure coerenti.
+          // Per carichi >=100 W mantieni le due misure della versione precedente.
+          id(pc_learn_streak)++;
+          if (delta<100.0f && id(pc_learn_streak)<3) return;
+          id(pc_learn_streak)=0;
+          id(pc_learn_candidate_w)=delta;
+          const float tolerance=fmaxf(12.0f,fminf(50.0f,0.10f*delta));
+          // Il vecchio profilo generico 'Altro' non deve bloccare l'apprendimento
+          // di una luce o di un diverso elettrodomestico con potenza simile.
+          // Per i profili specifici il filtro riduce le ripetizioni dei cicli,
+          // ma due apparecchi con identica potenza rimangono indistinguibili.
+          if (id(pc_learn_last_key)!=0 && id(pc_learn_last_key)/100!=10 &&
+              id(pc_learn_last_confirm_ms)!=0 &&
+              (uint32_t)(now-id(pc_learn_last_confirm_ms))<7200000u &&
+              fabsf(delta-id(pc_learn_last_confirm_w))<tolerance) {
+            id(pc_learn_base)=w;
+            id(pc_learn_cooldown_until_ms)=now+60000u;
+            return;
+          }
+          // Riconoscimento conservativo: almeno tre conferme, UN SOLO profilo
+          // compatibile; in caso di ambiguita' la domanda viene mostrata.
+          int matching=0, matched=-1;
+          for (int i=0;i<32;i++) {
+            if (id(pc_learn_keys)[i]==0 || id(pc_learn_counts)[i]<3 ||
+                id(pc_learn_keys)[i]/100==10) continue; // Mai riconoscere 'Altro'.
+            const float mean=id(pc_learn_means)[i];
+            if (fabsf(mean-delta)<=fmaxf(12.0f,fminf(75.0f,0.12f*mean))) {
+              matching++;
+              matched=i;
+            }
+          }
+          if (matching==1) {
+            static const char *const n[11]={"Microonde","Piano induzione",
+              "Forno grande","Caldaia","Purificatore 1","Purificatore 2",
+              "Ferro da stiro","Deumidificatore 1","Deumidificatore 2","Altro",
+              "Illuminazione"};
+            const int key=id(pc_learn_keys)[matched];
+            const int dev=key/100-1;
+            char msg[110];
+            snprintf(msg,sizeof(msg),"Probabile %s (+%.0f W; modalita %d)",
+              dev>=0 && dev<11?n[dev]:"carico",delta,key%100);
+            id(pc_learn_status).publish_state(msg);
+            id(pc_learn_base)=w;
+            id(pc_learn_cooldown_until_ms)=now+((uint32_t)${learning_cooldown_s})*1000u;
+            return;
+          }
+          id(pc_learn_pending)=true;
+          id(pc_learn_new_prompt)=true;
+          id(pc_learn_since_ms)=now;
+          id(pc_learn_device_idx)=0;
+          id(pc_learn_mode_idx)=0;
+          id(pc_learn_mode_count)=7;
+          id(pc_learn_edit_stage)=0;
+          id(pc_last_activity_ms)=now;
+      - if:
+          condition:
+            lambda: 'return id(pc_learn_new_prompt) && id(pc_learn_pending) && !id(pc_ota) && id(pc_auto_mode)!=2;'
+          then:
+            - script.execute: pc_learn_draw
+            - lvgl.page.show:
+                id: pc_learn_page
+                animation: NONE
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 7
+            - delay: 180ms
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 7
+            - lambda: 'id(pc_learn_new_prompt)=false;'
+
+  # Unica tabella delle modalita': aggiorna titolo, modalita', selezione e W.
+  - id: pc_learn_draw
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(pc_learn_pending) || id(pc_ota)) return;
+          // Appendere in coda: l'indice di 'Altro' (key 1001) rimane invariato
+          // per non reinterpretare i profili gia' salvati in memoria.
+          static const char *const devices[11]={
+            "Microonde","Piano induzione","Forno grande","Caldaia",
+            "Purificatore","Tenda da Sole","Ferro da stiro",
+            "Tapparella","Deumidificatore","Illuminazione","Altro"};
+          static const char *const opts[11][24]={
+            {"Jet / Massima","750 W","650 W","500 W","350 W","160 W","90 W"},
+            {"Livello 1","Livello 2","Livello 3","Livello 4","Livello 5",
+             "Livello 6","Livello 7","Livello 8","Livello 9"},
+            {"Statico 100 C","Statico 120 C","Statico 140 C","Statico 160 C",
+             "Statico 180 C","Statico 200 C","Statico 220 C","Statico 240 C",
+             "Ventilato 160 C","Ventilato 180 C","Ventilato 200 C","Ventilato 220 C",
+             "Grill","Altro"},
+            {"Riscaldamento","Acqua calda","Standby","Altro"},
+            {"Auto","Velocita 1","Velocita 2","Velocita 3","Massima"},
+            {"Apertura","Chiusura"},
+            {"Temp. bassa","Temp. media","Temp. alta","Vapore"},
+            {"Apertura","Chiusura"},
+            {"Auto","Continuo","Velocita bassa","Velocita alta"},
+            {"Cameretta","Camera","Sala","Cucina","Bagno","Ingresso","Altro"},
+            {"Altro non elencato"},
+          };
+          const int dev=std::max(0,std::min(10,id(pc_learn_device_idx)));
+          int n=0;
+          while(n<24 && opts[dev][n]!=nullptr) n++;
+          id(pc_learn_mode_count)=std::max(1,n);
+          if (id(pc_learn_mode_idx)>=id(pc_learn_mode_count)) id(pc_learn_mode_idx)=0;
+          char watts[40];
+          snprintf(watts,sizeof(watts),"+%.0f W",id(pc_learn_candidate_w));
+          lv_label_set_text(id(pc_learn_watt_label),watts);
+          lv_label_set_text(id(pc_learn_device_label),devices[dev]);
+          lv_label_set_text(id(pc_learn_mode_label),opts[dev][id(pc_learn_mode_idx)]);
+          lv_obj_set_style_border_color(id(pc_learn_device_btn),
+            lv_color_hex(id(pc_learn_edit_stage)==0?0x38BDF8:0x334155),LV_PART_MAIN);
+          lv_obj_set_style_border_color(id(pc_learn_mode_btn),
+            lv_color_hex(id(pc_learn_edit_stage)==1?0x38BDF8:0x334155),LV_PART_MAIN);
+
+  - id: pc_learn_close
+    mode: restart
+    then:
+      - lambda: |-
+          id(pc_learn_pending)=false;
+          id(pc_learn_streak)=0;
+          id(pc_learn_base)=std::isfinite(id(pc_other_w).state)
+            ? id(pc_other_w).state : id(pc_learn_base);
+          id(pc_learn_base_ready)=std::isfinite(id(pc_other_w).state);
+          id(pc_learn_cooldown_until_ms)=millis()+((uint32_t)${learning_cooldown_s})*1000u;
+          id(pc_page)=0;
+          id(pc_home_selection_explicit)=false;
+          id(pc_last_activity_ms)=millis();
+          id(pc_dirty)=true;
+      - if:
+          condition:
+            lambda: 'return !id(pc_ota) && !id(pc_auto_overlay_open) && id(pc_auto_mode)!=2;'
+          then:
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+
+  - id: pc_learn_confirm
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(pc_learn_pending)) return;
+          const int key=(id(pc_learn_device_idx)+1)*100+id(pc_learn_mode_idx)+1;
+          int slot=-1;
+          for (int i=0;i<32;i++) if (id(pc_learn_keys)[i]==key) {slot=i;break;}
+          if(slot<0) for (int i=0;i<32;i++) if(id(pc_learn_keys)[i]==0) {slot=i;break;}
+          if(slot<0) {
+            id(pc_learn_status).publish_state("Memoria piena: campione non salvato");
+            return;
+          }
+          const float delta=id(pc_learn_candidate_w);
+          if (id(pc_learn_keys)[slot]==0) {
+            id(pc_learn_keys)[slot]=key;
+            id(pc_learn_means)[slot]=delta;
+            id(pc_learn_counts)[slot]=1;
+          } else {
+            const int n=std::min(1000,id(pc_learn_counts)[slot]+1);
+            id(pc_learn_means)[slot]+=(delta-id(pc_learn_means)[slot])/n;
+            id(pc_learn_counts)[slot]=n;
+          }
+          id(pc_learn_last_key)=key;
+          id(pc_learn_last_confirm_ms)=millis();
+          id(pc_learn_last_confirm_w)=delta;
+          char msg[170];
+          snprintf(msg,sizeof(msg),"%s | %s | +%.0f W | campioni %d",
+            lv_label_get_text(id(pc_learn_device_label)),
+            lv_label_get_text(id(pc_learn_mode_label)),delta,id(pc_learn_counts)[slot]);
+          id(pc_learn_status).publish_state(msg);
+      - script.execute: pc_learn_close
+
+  # Gli avvisi dipendono SOLO da nuove misure di potenza totale.
+  # Sul primo dato valido si memorizza la zona senza far vibrare il Knob.
+  # Rientro con isteresi di 100 W: evita ripetizioni vicino alle soglie.
+  # Nessun polling o ridisegno grafico aggiuntivo.
+  - id: pc_haptic_check
+    mode: restart
+    then:
+      - lambda: |-
+          id(pc_haptic_event) = 0;
+          if (id(pc_boot_active) || id(pc_ota) || id(pc_auto_mode)==2) return;
+          const float w = id(pc_home_w).state;
+          if (!std::isfinite(w) || w < 0.0f) return;
+          const float warn = (float) ${power_warning_w};
+          const float crit = (float) ${power_critical_w};
+          const float hyst = (float) ${power_haptic_hysteresis_w};
+          const int prev = id(pc_haptic_zone);
+          int next = prev;
+          if (prev < 0) {
+            // All'avvio classifica senza suonare/vibrare.
+            next = w >= crit ? 2 : (w >= warn ? 1 : 0);
+          } else if (prev == 0) {
+            next = w >= crit ? 2 : (w >= warn ? 1 : 0);
+          } else if (prev == 1) {
+            next = w >= crit ? 2 : (w < warn - hyst ? 0 : 1);
+          } else {
+            // Uscendo dal rosso non avvisa di nuovo per il giallo.
+            next = w < crit - hyst ? (w < warn - hyst ? 0 : 1) : 2;
+          }
+          id(pc_haptic_zone) = next;
+          if (prev >= 0 && next > prev)
+            id(pc_haptic_event) = next == 2 ? 2 : 1;
+      - if:
+          condition:
+            lambda: 'return id(pc_haptic_event) == 1;'
+          then:
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 7    # Soft bump: ingresso nel giallo.
+      - if:
+          condition:
+            lambda: 'return id(pc_haptic_event) == 2;'
+          then:
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 10   # Double click: ingresso nel rosso.
+
+  - id: pc_rotate
+    mode: restart
+    parameters:
+      delta: int
+    then:
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active)) return;
+          if (id(pc_auto_mode)==2) { id(pc_auto_cancel_requested)=true; return; }
+          uint32_t now = millis();
+          if (now - id(pc_last_knob_ms) < 35) return;
+          id(pc_last_knob_ms) = now;
+          id(pc_last_activity_ms) = now;
+          if (id(pc_learn_pending)) {
+            const int step=delta>0?1:-1;
+            if (id(pc_learn_edit_stage)==0) {
+              id(pc_learn_device_idx)=(id(pc_learn_device_idx)+step+11)%11;
+              id(pc_learn_mode_idx)=0;
+            } else {
+              const int n=std::max(1,id(pc_learn_mode_count));
+              id(pc_learn_mode_idx)=(id(pc_learn_mode_idx)+step+n)%n;
+            }
+            return;
+          }
+          const char *configured[14] = {
+            "${appliance_01_sensor}",
+            "${appliance_02_sensor}",
+            "${appliance_03_sensor}",
+            "${appliance_04_sensor}",
+            "${appliance_05_sensor}",
+            "${appliance_06_sensor}",
+            "${appliance_07_sensor}",
+            "${appliance_08_sensor}",
+            "${appliance_09_sensor}",
+            "${appliance_10_sensor}",
+            "${appliance_11_sensor}",
+            "${appliance_12_sensor}",
+            "${appliance_13_sensor}",
+            "${appliance_14_sensor}"
+          };
+          auto present = [&](int i) -> bool {
+            return strncmp(configured[i], "sensor.pc_non_configurato_", 26) != 0;
+          };
+          if (id(pc_page) == 1) {
+            // Distacco: prima AUTO per priorita', poi NO AUTO (alfabetico).
+            // Scorri senza selezione; con selezione sposta SOLO dentro AUTO.
+            auto &order=id(pc_prio_order);
+            const int count=(int)order.size();
+            if (!count) return;
+            const int step=delta>0?1:-1;
+            int current=std::max(0,std::min(count-1,id(pc_prio_cursor)));
+            int allowed[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),
+              id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),
+              id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),
+              id(pc_auto_allow_13),id(pc_auto_allow_14)};
+            int active_count=0;
+            for (int slot:order) if (allowed[slot]) active_count++;
+            if (id(pc_prio_edit_slot)<0) {
+              id(pc_prio_cursor)=std::max(0,std::min(count-1,current+step));
+            } else {
+              const int slot=id(pc_prio_edit_slot);
+              int from=-1;
+              for (int i=0;i<count;i++) if(order[i]==slot) { from=i; break; }
+              if (from<0) { id(pc_prio_edit_slot)=-1; return; }
+              const bool is_auto=allowed[slot]!=0;
+              if (is_auto && step>0 && from==active_count-1) {
+                // Uno scatto OLTRE l'ultimo carico AUTO chiede conferma,
+                // anche quando sotto ci sono gia' carichi NO AUTO.
+                id(pc_prio_prompt_mode)=1;
+                id(pc_prio_prompt_slot)=slot;
+                id(pc_prio_prompt_since_ms)=now;
+                id(pc_page)=6;
+              } else if (!is_auto && step<0) {
+                // Un escluso torna AUTO SOLO dopo conferma esplicita.
+                id(pc_prio_prompt_mode)=2;
+                id(pc_prio_prompt_slot)=slot;
+                id(pc_prio_prompt_since_ms)=now;
+                id(pc_page)=6;
+              } else if (is_auto) {
+                const int to=std::max(0,std::min(active_count-1,from+step));
+                if (to!=from) {
+                  std::swap(order[from],order[to]);
+                  id(pc_prio_cursor)=to;
+                  id(pc_prio_last_move_ms)=now;
+                  id(pc_prio_pending)=true;
+                  id(pc_prio_saved_ms)=0;
+                }
+              } else {
+                // I NO AUTO rimangono raggruppati in ordine alfabetico.
+                id(pc_prio_cursor)=from;
+              }
+            }
+            const int cursor=id(pc_prio_cursor);
+            if (cursor<id(pc_prio_top)) id(pc_prio_top)=cursor;
+            if (cursor>=id(pc_prio_top)+4) id(pc_prio_top)=cursor-3;
+          } else if (id(pc_page)==6) {
+            // Modale: la rotazione non vale come consenso.
+            return;
+          } else if (id(pc_page) == 4) {
+            // IMPOSTAZIONI: parametri distacco + soglia apprendimento, salvataggio a 3s.
+            const int step=delta>0?1:-1;
+            if (id(pc_auto_edit)<0) {
+              id(pc_auto_cursor)=std::max(0,std::min(7,id(pc_auto_cursor)+step));
+              if (id(pc_auto_cursor)<id(pc_auto_top)) id(pc_auto_top)=id(pc_auto_cursor);
+              if (id(pc_auto_cursor)>=id(pc_auto_top)+4) id(pc_auto_top)=id(pc_auto_cursor)-3;
+            } else {
+              const int n=id(pc_auto_edit);
+              if (n==0 || n==1 || n==2) id(pc_auto_draft)=1-id(pc_auto_draft);
+              else if (n==7) {
+                // Soglia di APPRENDIMENTO: regolazione a step di 5 W.
+                id(pc_auto_draft)=std::max(10,std::min(500,id(pc_auto_draft)+step*5));
+              } else {
+                const int lo=n==3?0:n==4?5:n==5?30:10;
+                const int hi=n==3?60:n==4?60:n==5?600:120;
+                const int inc=n==5||n==6?10:1;
+                id(pc_auto_draft)=std::max(lo,std::min(hi,id(pc_auto_draft)+step*inc));
+              }
+              id(pc_auto_pending)=true;
+              id(pc_auto_last_move_ms)=now;
+              id(pc_auto_saved_ms)=0;
+            }
+          } else if (id(pc_page) == 3) {
+            // COLORI: senza selezione scorri le righe, con tap cambi la palette.
+            const int count = (int) id(pc_color_order).size();
+            if (count == 0) return;
+            const int step = delta > 0 ? 1 : -1;
+            if (id(pc_color_edit_slot) < 0) {
+              id(pc_color_cursor) = std::max(0, std::min(count-1, id(pc_color_cursor)+step));
+              if (id(pc_color_cursor) < id(pc_color_top)) id(pc_color_top)=id(pc_color_cursor);
+              if (id(pc_color_cursor) >= id(pc_color_top)+4) id(pc_color_top)=id(pc_color_cursor)-3;
+            } else {
+              id(pc_color_draft) = (id(pc_color_draft) + step + 14) % 14;
+              id(pc_color_last_move_ms) = now;
+              id(pc_color_pending) = true;
+              id(pc_color_saved_ms) = 0;
+            }
+          } else {
+            // Home ed Elettrodomestici: navigazione in ordine di consumo decrescente.
+            const float values[14] = {
+              id(pc_w_01).state,id(pc_w_02).state,id(pc_w_03).state,id(pc_w_04).state,
+              id(pc_w_05).state,id(pc_w_06).state,id(pc_w_07).state,id(pc_w_08).state,
+              id(pc_w_09).state,id(pc_w_10).state,id(pc_w_11).state,id(pc_w_12).state,
+              id(pc_w_13).state,id(pc_w_14).state
+            };
+            // Home: mostra soltanto i dispositivi effettivamente accesi.
+            // Pagina Elettrodomestici: lascia accessibili tutti quelli configurati.
+            const char *controls[14] = {
+              "${appliance_01_switch}",
+              "${appliance_02_switch}",
+              "${appliance_03_switch}",
+              "${appliance_04_switch}",
+              "${appliance_05_switch}",
+              "${appliance_06_switch}",
+              "${appliance_07_switch}",
+              "${appliance_08_switch}",
+              "${appliance_09_switch}",
+              "${appliance_10_switch}",
+              "${appliance_11_switch}",
+              "${appliance_12_switch}",
+              "${appliance_13_switch}",
+              "${appliance_14_switch}"
+            };
+            const std::string states[14] = {
+              id(pc_control_state_01).state,
+              id(pc_control_state_02).state,
+              id(pc_control_state_03).state,
+              id(pc_control_state_04).state,
+              id(pc_control_state_05).state,
+              id(pc_control_state_06).state,
+              id(pc_control_state_07).state,
+              id(pc_control_state_08).state,
+              id(pc_control_state_09).state,
+              id(pc_control_state_10).state,
+              id(pc_control_state_11).state,
+              id(pc_control_state_12).state,
+              id(pc_control_state_13).state,
+              id(pc_control_state_14).state
+            };
+            auto active = [&](int i) -> bool {
+              if (!present(i)) return false;
+              if ((controls[i][0] == '\0' || strncmp(controls[i], "switch.pc_non_configurato_", 26) == 0))
+                return std::isfinite(values[i]) && values[i] > 0.0f;
+              const auto &st = states[i];
+              if (strncmp(controls[i], "climate.", 8) == 0)
+                return !st.empty() && st != "off" && st != "unknown" && st != "unavailable";
+              return st == "on";
+            };
+            // Il segmento grigio e' l'ULTIMA voce della sola Home.
+            // Il suo indice virtuale (14) non va mai in pc_selected: quella variabile
+            // e' usata anche nei pulsanti ON/OFF e deve rimanere 0..13.
+            const bool in_home = id(pc_page)==0;
+            bool other_available = false;
+            if (in_home) {
+              const float total = id(pc_home_w).state;
+              if (std::isfinite(total) && total >= 0.0f) {
+                float attributed = 0.0f;
+                for (int i=0;i<14;i++)
+                  if (active(i) && std::isfinite(values[i]) && values[i]>0.0f)
+                    attributed += values[i];
+                other_available = total - attributed > 0.0f;
+              }
+            }
+            int order[15]; int count=0;
+            for (int i=0;i<14;i++)
+              if (in_home ? active(i) : present(i)) order[count++]=i;
+            // Ordina SOLO gli apparecchi: 'Altri consumi' rimane in fondo.
+            for (int i=0;i<count-1;i++) for (int j=i+1;j<count;j++) {
+              float wi = std::isfinite(values[order[i]]) && values[order[i]]>0 ? values[order[i]] : 0.0f;
+              float wj = std::isfinite(values[order[j]]) && values[order[j]]>0 ? values[order[j]] : 0.0f;
+              if (wj > wi) { int t=order[i]; order[i]=order[j]; order[j]=t; }
+            }
+            if (in_home && other_available) order[count++]=14;
+            if (count>0) {
+              const int current = (in_home && id(pc_home_other_selected)) ? 14 : id(pc_selected);
+              int pos=-1;
+              for (int i=0;i<count;i++) if (order[i]==current) { pos=i; break; }
+              // Se la selezione e' sparita, riparti dal primo apparecchio attivo
+              // (oppure dal grigio se e' l'unica voce disponibile).
+              const int target = pos<0 ? order[0] : order[(pos + (delta>0?1:-1) + count)%count];
+              if (in_home) id(pc_home_other_selected) = target==14;
+              if (target<14) id(pc_selected)=target;
+              if (in_home) id(pc_home_selection_explicit)=true;
+            } else if (in_home) {
+              id(pc_home_other_selected)=false;
+              id(pc_home_selection_explicit)=false;
+            }
+          }
+          id(pc_dirty) = true;
+      - if:
+          condition:
+            lambda: 'return id(pc_learn_pending) && id(pc_auto_mode)!=2;'
+          then:
+            - script.execute: pc_learn_draw
+      - if:
+          condition:
+            lambda: 'return id(pc_prio_prompt_mode)!=0 && id(pc_page)==6;'
+          then:
+            - script.execute: pc_prio_prompt_show
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_cancel_requested);'
+          then:
+            - script.execute: pc_auto_cancel
+          else:
+            - script.execute: pc_refresh
+
+  # Prepara la lista SOLO entrando nel Setup: 1=primo da poter spegnere.
+  # Gli ex aequo sono ordinati per nome; il draft e' indipendente dai valori salvati.
+  - id: pc_prio_enter
+    mode: restart
+    then:
+      - lambda: |-
+          const char *names[14] = {
+            "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+            "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+            "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+            "${appliance_13_name}","${appliance_14_name}"
+          };
+          const char *sensors[14] = {
+            "${appliance_01_sensor}","${appliance_02_sensor}","${appliance_03_sensor}","${appliance_04_sensor}",
+            "${appliance_05_sensor}","${appliance_06_sensor}","${appliance_07_sensor}","${appliance_08_sensor}",
+            "${appliance_09_sensor}","${appliance_10_sensor}","${appliance_11_sensor}","${appliance_12_sensor}",
+            "${appliance_13_sensor}","${appliance_14_sensor}"
+          };
+          const char *controls[14] = {
+            "${appliance_01_switch}","${appliance_02_switch}","${appliance_03_switch}","${appliance_04_switch}",
+            "${appliance_05_switch}","${appliance_06_switch}","${appliance_07_switch}","${appliance_08_switch}",
+            "${appliance_09_switch}","${appliance_10_switch}","${appliance_11_switch}","${appliance_12_switch}",
+            "${appliance_13_switch}","${appliance_14_switch}"
+          };
+          const int priorities[14] = {
+            id(pc_priority_01),id(pc_priority_02),id(pc_priority_03),id(pc_priority_04),
+            id(pc_priority_05),id(pc_priority_06),id(pc_priority_07),id(pc_priority_08),
+            id(pc_priority_09),id(pc_priority_10),id(pc_priority_11),id(pc_priority_12),
+            id(pc_priority_13),id(pc_priority_14)
+          };
+          auto &order = id(pc_prio_order);
+          order.clear();
+          for (int i=0;i<14;i++) {
+            const bool configured = strncmp(sensors[i],"sensor.pc_non_configurato_",26)!=0;
+            const bool controllable = strncmp(controls[i],"switch.",7)==0 ||
+                                      strncmp(controls[i],"climate.",8)==0;
+            const bool placeholder = strncmp(controls[i],"switch.pc_non_configurato_",26)==0;
+            if (configured && controllable && !placeholder) order.push_back(i);
+          }
+          // I carichi AUTO precedono tutti i NO AUTO. Solo gli AUTO
+          // hanno una priorita' operativa; esclusi in ordine alfabetico.
+          const int allowed[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),
+            id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),
+            id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),
+            id(pc_auto_allow_13),id(pc_auto_allow_14)};
+          for (int i=0;i<(int)order.size()-1;i++)
+            for (int j=i+1;j<(int)order.size();j++) {
+              const int a=order[i], b=order[j];
+              if (allowed[b]>allowed[a] ||
+                  (allowed[a]==allowed[b] && (
+                   (allowed[a] && priorities[b]<priorities[a]) ||
+                   ((!allowed[a] || priorities[a]==priorities[b]) && strcmp(names[b],names[a])<0))))
+                std::swap(order[i],order[j]);
+            }
+          id(pc_prio_cursor)=0;
+          id(pc_prio_top)=0;
+          id(pc_prio_edit_slot)=-1;
+          id(pc_prio_pending)=false;
+          id(pc_prio_saved_ms)=0;
+          id(pc_prio_prompt_mode)=0;
+          id(pc_prio_prompt_slot)=-1;
+          id(pc_page)=1;
+          id(pc_dirty)=true;
+      - script.execute: pc_refresh
+
+  # Tap su una delle quattro righe visibili: la rotazione passa in modalita' SPOSTA.
+  - id: pc_prio_select_row
+    mode: restart
+    parameters:
+      row: int
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_prio_pending);'
+          then:
+            - script.execute: pc_prio_commit
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active) || id(pc_page)!=1) return;
+          const int position=id(pc_prio_top)+row;
+          if (position<0 || position>=(int)id(pc_prio_order).size()) return;
+          id(pc_prio_cursor)=position;
+          id(pc_prio_edit_slot)=id(pc_prio_order)[position];
+          id(pc_prio_last_move_ms)=millis();
+          id(pc_prio_saved_ms)=0;
+      - script.execute: pc_refresh
+
+  # I valori persistenti vengono aggiornati SOLO alla fine del movimento.
+  - id: pc_prio_commit
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_prio_pending)) {
+            int *priorities[14] = {
+              &id(pc_priority_01),&id(pc_priority_02),&id(pc_priority_03),&id(pc_priority_04),
+              &id(pc_priority_05),&id(pc_priority_06),&id(pc_priority_07),&id(pc_priority_08),
+              &id(pc_priority_09),&id(pc_priority_10),&id(pc_priority_11),&id(pc_priority_12),
+              &id(pc_priority_13),&id(pc_priority_14)
+            };
+            // AUTO: priorita' consecutive. NO AUTO: valore sentinella,
+            // mai interpretato come permesso di distacco.
+            const int allowed[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),
+              id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),
+              id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),
+              id(pc_auto_allow_13),id(pc_auto_allow_14)};
+            const auto &order=id(pc_prio_order);
+            int rank=0;
+            for (int slot:order) *priorities[slot]=allowed[slot]?(++rank):99;
+            id(pc_prio_saved_ms)=millis();
+          }
+          id(pc_prio_pending)=false;
+          id(pc_prio_edit_slot)=-1;
+          id(pc_dirty)=true;
+      - script.execute: pc_refresh
+
+  # Modale NO AUTO / AUTO: nessuna azione e' eseguita senza tap su SI.
+  - id: pc_prio_prompt_show
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_page)!=6 || id(pc_prio_prompt_mode)==0) return;
+          const char *names[14]={
+            "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+            "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+            "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+            "${appliance_13_name}","${appliance_14_name}"};
+          const int slot=id(pc_prio_prompt_slot);
+          if (slot<0 || slot>=14) return;
+          lv_label_set_text(id(pc_prio_prompt_title),
+            id(pc_prio_prompt_mode)==1 ? "ESCLUDERE?" : "RIABILITARE?");
+          lv_label_set_text(id(pc_prio_prompt_name),names[slot]);
+          lv_label_set_text(id(pc_prio_prompt_explain),
+            id(pc_prio_prompt_mode)==1 ? "NON SPEGNERE IN AUTO" : "CONSENTIRE DISTACCO AUTO");
+      - lvgl.page.show:
+          id: pc_prio_prompt_page
+          animation: NONE
+
+  - id: pc_prio_prompt_answer
+    mode: restart
+    parameters:
+      accept: bool
+    then:
+      - lambda: |-
+          if (id(pc_page)!=6 || id(pc_prio_prompt_mode)==0) return;
+          const int slot=id(pc_prio_prompt_slot);
+          const int mode=id(pc_prio_prompt_mode);
+          if (slot<0 || slot>=14) { id(pc_prio_prompt_mode)=0; return; }
+          if (accept) {
+            int *allow[14]={&id(pc_auto_allow_01),&id(pc_auto_allow_02),&id(pc_auto_allow_03),&id(pc_auto_allow_04),
+              &id(pc_auto_allow_05),&id(pc_auto_allow_06),&id(pc_auto_allow_07),&id(pc_auto_allow_08),
+              &id(pc_auto_allow_09),&id(pc_auto_allow_10),&id(pc_auto_allow_11),&id(pc_auto_allow_12),
+              &id(pc_auto_allow_13),&id(pc_auto_allow_14)};
+            auto &order=id(pc_prio_order);
+            int from=-1;
+            for (int i=0;i<(int)order.size();i++) if(order[i]==slot) {from=i; break;}
+            if (from>=0) {
+              // Conclusa una scelta esplicita, ricostruisci i due gruppi:
+              // AUTO in cima, esclusi dopo, ordinati per nome.
+              *allow[slot]=(mode==2)?1:0;
+              order.erase(order.begin()+from);
+              if (mode==1) order.push_back(slot);
+              else {
+                int last_auto=0;
+                for (int item:order) if(*allow[item]) last_auto++;
+                order.insert(order.begin()+last_auto,slot);
+              }
+              if (mode==1) {
+                const char *names[14]={
+                  "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+                  "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+                  "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+                  "${appliance_13_name}","${appliance_14_name}"};
+                int first_no_auto=0;
+                for (int item:order) if(*allow[item]) first_no_auto++;
+                for (int i=first_no_auto;i<(int)order.size()-1;i++)
+                  for (int j=i+1;j<(int)order.size();j++)
+                    if (strcmp(names[order[j]],names[order[i]])<0) std::swap(order[i],order[j]);
+              }
+              for (int i=0;i<(int)order.size();i++) if (order[i]==slot) {id(pc_prio_cursor)=i;break;}
+              id(pc_prio_pending)=true;
+              id(pc_prio_saved_ms)=0;
+              // La scelta esplicita SI e' l'unico punto che modifica AUTO.
+              // L'azione successiva pc_prio_commit salva subito le priorita'.
+            }
+          }
+          id(pc_prio_last_move_ms)=millis();
+          id(pc_last_activity_ms)=millis();
+          id(pc_prio_prompt_mode)=0;
+          id(pc_prio_prompt_slot)=-1;
+          id(pc_page)=1;
+          const int cursor=id(pc_prio_cursor);
+          if (cursor<id(pc_prio_top)) id(pc_prio_top)=cursor;
+          if (cursor>=id(pc_prio_top)+4) id(pc_prio_top)=cursor-3;
+          id(pc_dirty)=true;
+      - lvgl.page.show:
+          id: setup_page
+          animation: NONE
+      - if:
+          condition:
+            lambda: 'return accept && id(pc_prio_pending);'
+          then:
+            - script.execute: pc_prio_commit
+          else:
+            - script.execute: pc_refresh
+
+  # COLORI: lista alfabetica, inclusi gli slot solo-monitoraggio configurati.
+  - id: pc_color_enter
+    mode: restart
+    then:
+      - lambda: |-
+          const char *names[14] = {
+            "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+            "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+            "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+            "${appliance_13_name}","${appliance_14_name}"
+          };
+          const char *sensors[14] = {
+            "${appliance_01_sensor}","${appliance_02_sensor}","${appliance_03_sensor}","${appliance_04_sensor}",
+            "${appliance_05_sensor}","${appliance_06_sensor}","${appliance_07_sensor}","${appliance_08_sensor}",
+            "${appliance_09_sensor}","${appliance_10_sensor}","${appliance_11_sensor}","${appliance_12_sensor}",
+            "${appliance_13_sensor}","${appliance_14_sensor}"
+          };
+          auto &order=id(pc_color_order);
+          order.clear();
+          for (int i=0;i<14;i++)
+            if (strncmp(sensors[i],"sensor.pc_non_configurato_",26)!=0) order.push_back(i);
+          for (int i=0;i<(int)order.size()-1;i++)
+            for (int j=i+1;j<(int)order.size();j++)
+              if (strcmp(names[order[j]],names[order[i]])<0) std::swap(order[i],order[j]);
+          id(pc_color_cursor)=0;
+          id(pc_color_top)=0;
+          id(pc_color_edit_slot)=-1;
+          id(pc_color_pending)=false;
+          id(pc_color_saved_ms)=0;
+          id(pc_page)=3;
+          id(pc_dirty)=true;
+      - script.execute: pc_refresh
+
+  # Tap su una riga: bozza del colore, non ancora scritta in flash.
+  - id: pc_color_select_row
+    mode: restart
+    parameters:
+      row: int
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_color_pending);'
+          then:
+            - script.execute: pc_color_commit
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active) || id(pc_page)!=3) return;
+          const int pos=id(pc_color_top)+row;
+          if (pos<0 || pos>=(int)id(pc_color_order).size()) return;
+          int *colors[14] = {
+            &id(pc_color_01),&id(pc_color_02),&id(pc_color_03),&id(pc_color_04),
+            &id(pc_color_05),&id(pc_color_06),&id(pc_color_07),&id(pc_color_08),
+            &id(pc_color_09),&id(pc_color_10),&id(pc_color_11),&id(pc_color_12),
+            &id(pc_color_13),&id(pc_color_14)
+          };
+          id(pc_color_cursor)=pos;
+          id(pc_color_edit_slot)=id(pc_color_order)[pos];
+          id(pc_color_draft)=(*colors[id(pc_color_edit_slot)]%14+14)%14;
+          id(pc_color_last_move_ms)=millis();
+          id(pc_color_pending)=false;
+          id(pc_color_saved_ms)=0;
+      - script.execute: pc_refresh
+
+  # Dopo 3s senza rotazione applica una sola volta il colore persistente.
+  - id: pc_color_commit
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_color_pending) && id(pc_color_edit_slot)>=0 && id(pc_color_edit_slot)<14) {
+            int *colors[14] = {
+              &id(pc_color_01),&id(pc_color_02),&id(pc_color_03),&id(pc_color_04),
+              &id(pc_color_05),&id(pc_color_06),&id(pc_color_07),&id(pc_color_08),
+              &id(pc_color_09),&id(pc_color_10),&id(pc_color_11),&id(pc_color_12),
+              &id(pc_color_13),&id(pc_color_14)
+            };
+            *colors[id(pc_color_edit_slot)] = id(pc_color_draft);
+            id(pc_color_saved_ms)=millis();
+          }
+          id(pc_color_pending)=false;
+          id(pc_color_edit_slot)=-1;
+          id(pc_dirty)=true;
+      - script.execute: pc_refresh
+
+  - id: pc_choose_slot
+    mode: restart
+    parameters:
+      delta: int
+    then:
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active)) return;
+          const char *configured[14] = {
+            "${appliance_01_sensor}",
+            "${appliance_02_sensor}",
+            "${appliance_03_sensor}",
+            "${appliance_04_sensor}",
+            "${appliance_05_sensor}",
+            "${appliance_06_sensor}",
+            "${appliance_07_sensor}",
+            "${appliance_08_sensor}",
+            "${appliance_09_sensor}",
+            "${appliance_10_sensor}",
+            "${appliance_11_sensor}",
+            "${appliance_12_sensor}",
+            "${appliance_13_sensor}",
+            "${appliance_14_sensor}"
+          };
+          int next = id(pc_selected);
+          for (int k=0;k<14;k++) {
+            next = (next + delta + 14) % 14;
+            if (strncmp(configured[next], "sensor.pc_non_configurato_", 26) != 0) {
+              id(pc_selected) = next; break;
+            }
+          }
+          id(pc_dirty) = true;
+      - script.execute: pc_refresh
+
+  # Editor impostazioni: sceglie una riga e prepara la bozza NON persistente.
+  - id: pc_auto_settings_enter
+    mode: restart
+    then:
+      - lambda: |-
+          id(pc_page)=4;
+          id(pc_auto_cursor)=0;
+          id(pc_auto_top)=0;
+          id(pc_auto_edit)=-1;
+          id(pc_auto_pending)=false;
+          id(pc_last_activity_ms)=millis();
+      - script.execute: pc_refresh
+
+  - id: pc_auto_settings_select_row
+    mode: restart
+    parameters:
+      row: int
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_pending);'
+          then:
+            - script.execute: pc_auto_settings_commit
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active) || id(pc_page)!=4) return;
+          const int index=id(pc_auto_top)+row;
+          if (index<0 || index>=8) return;
+          const int values[8]={id(pc_auto_enabled),id(pc_auto_yellow),id(pc_auto_red),
+            id(pc_auto_delay_s),id(pc_auto_confirm_s),id(pc_auto_suspend_s),id(pc_auto_after_s),
+            id(pc_learn_min_rise_w)};
+          id(pc_auto_cursor)=index;
+          id(pc_auto_edit)=index;
+          id(pc_auto_draft)=values[index];
+          id(pc_auto_last_move_ms)=millis();
+          id(pc_auto_saved_ms)=0;
+          id(pc_last_activity_ms)=millis();
+      - script.execute: pc_refresh
+
+  - id: pc_auto_settings_commit
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_auto_pending) && id(pc_auto_edit)>=0 && id(pc_auto_edit)<8) {
+            if (id(pc_auto_edit)==7) {
+              // Memorizza una sola volta a fine regolazione, senza ricompilazione.
+              id(pc_learn_min_rise_w)=id(pc_auto_draft);
+              // Non interpretare come nuovo avvio un carico gia presente
+              // quando viene cambiata la soglia.
+              id(pc_learn_streak)=0;
+              id(pc_learn_base_ready)=false;
+              id(pc_learn_last_sample_ms)=id(pc_auto_last_power_data_ms);
+            } else {
+              int *vars[7]={&id(pc_auto_enabled),&id(pc_auto_yellow),&id(pc_auto_red),
+                &id(pc_auto_delay_s),&id(pc_auto_confirm_s),&id(pc_auto_suspend_s),&id(pc_auto_after_s)};
+              *vars[id(pc_auto_edit)]=id(pc_auto_draft);
+              if (!id(pc_auto_enabled)) id(pc_auto_mode)=0;
+            }
+            id(pc_auto_saved_ms)=millis();
+          }
+          id(pc_auto_pending)=false;          id(pc_auto_edit)=-1;
+          id(pc_dirty)=true;
+      - script.execute: pc_refresh
+
+  # Premendo ANNULLA oppure ruotando si sospende l'automazione.
+  - id: pc_auto_cancel
+    mode: restart
+    then:
+      - drv2605.stop:
+          id: pc_haptic_driver
+      - lambda: |-
+          id(pc_auto_cancel_requested)=false;
+          if (id(pc_auto_mode)!=2) return;
+          id(pc_auto_mode)=0;
+          id(pc_auto_candidate)=-1;
+          id(pc_auto_overlay_open)=false;
+          id(pc_auto_fire)=false;
+          id(pc_auto_haptic_event)=0;
+          id(pc_auto_suspended_until_ms)=millis()+((uint32_t)id(pc_auto_suspend_s))*1000u;
+          id(pc_page)=0;
+          id(pc_last_activity_ms)=millis();
+          id(pc_home_selection_explicit)=false;
+          id(pc_dirty)=true;
+      - lvgl.page.show:
+          id: power_page
+          animation: NONE
+      - script.execute: pc_refresh
+
+  # Il servizio HA viene richiesto UNA sola volta; non assumiamo che sia riuscito.
+  - id: pc_auto_send_off
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(pc_auto_fire) || id(pc_auto_mode)!=2 || id(pc_ota) || id(pc_boot_active) ||
+                  !id(pc_auto_enabled) || !id(pc_wifi).is_connected() ||
+                  !id(pc_api).is_connected_with_state_subscription()) return false;
+              const int s=id(pc_auto_candidate);
+              if (s<0 || s>=14 || (id(pc_auto_attempted_mask)&(1u<<s))) return false;
+              const float w=id(pc_home_w).state;
+              if (!std::isfinite(w) || w<0 || id(pc_auto_last_power_data_ms)==0 ||
+                  (uint32_t)(millis()-id(pc_auto_last_power_data_ms))>180000u) return false;
+              const int z=(w>=${power_critical_w} && id(pc_auto_red))?2:
+                ((w>=${power_warning_w} && id(pc_auto_yellow))?1:0);
+              if (z<id(pc_auto_zone)) return false;
+              const char *controls[14]={
+                "${appliance_01_switch}","${appliance_02_switch}","${appliance_03_switch}","${appliance_04_switch}",
+                "${appliance_05_switch}","${appliance_06_switch}","${appliance_07_switch}","${appliance_08_switch}",
+                "${appliance_09_switch}","${appliance_10_switch}","${appliance_11_switch}","${appliance_12_switch}",
+                "${appliance_13_switch}","${appliance_14_switch}"};
+              const std::string states[14]={
+                id(pc_control_state_01).state,id(pc_control_state_02).state,id(pc_control_state_03).state,id(pc_control_state_04).state,
+                id(pc_control_state_05).state,id(pc_control_state_06).state,id(pc_control_state_07).state,id(pc_control_state_08).state,
+                id(pc_control_state_09).state,id(pc_control_state_10).state,id(pc_control_state_11).state,id(pc_control_state_12).state,
+                id(pc_control_state_13).state,id(pc_control_state_14).state};
+              const float powers[14]={
+                id(pc_w_01).state,id(pc_w_02).state,id(pc_w_03).state,id(pc_w_04).state,
+                id(pc_w_05).state,id(pc_w_06).state,id(pc_w_07).state,id(pc_w_08).state,
+                id(pc_w_09).state,id(pc_w_10).state,id(pc_w_11).state,id(pc_w_12).state,
+                id(pc_w_13).state,id(pc_w_14).state};
+              const int allowed[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),id(pc_auto_allow_13),id(pc_auto_allow_14)};
+              if (!allowed[s] || !std::isfinite(powers[s]) || powers[s]<10.0f) return false;
+              if (strncmp(controls[s],"switch.",7)==0) return states[s]=="on";
+              if (strncmp(controls[s],"climate.",8)==0)
+                return !states[s].empty() && states[s]!="off" && states[s]!="unknown" && states[s]!="unavailable";
+              return false;
+          then:
+            - homeassistant.action:
+                action: !lambda |-
+                  const char *controls[14]={
+                    "${appliance_01_switch}","${appliance_02_switch}","${appliance_03_switch}","${appliance_04_switch}",
+                    "${appliance_05_switch}","${appliance_06_switch}","${appliance_07_switch}","${appliance_08_switch}",
+                    "${appliance_09_switch}","${appliance_10_switch}","${appliance_11_switch}","${appliance_12_switch}",
+                    "${appliance_13_switch}","${appliance_14_switch}"};
+                  return std::string(strncmp(controls[id(pc_auto_candidate)],"climate.",8)==0 ? "climate.turn_off" : "switch.turn_off");
+                data_template:
+                  entity_id: "{{ target_entity }}"
+                variables:
+                  target_entity: !lambda |-
+                    const char *controls[14]={
+                      "${appliance_01_switch}","${appliance_02_switch}","${appliance_03_switch}","${appliance_04_switch}",
+                      "${appliance_05_switch}","${appliance_06_switch}","${appliance_07_switch}","${appliance_08_switch}",
+                      "${appliance_09_switch}","${appliance_10_switch}","${appliance_11_switch}","${appliance_12_switch}",
+                      "${appliance_13_switch}","${appliance_14_switch}"};
+                    return std::string(controls[id(pc_auto_candidate)]);
+            - lambda: |-
+                id(pc_auto_attempted_mask)|=(1u<<id(pc_auto_candidate));
+                id(pc_auto_last_command_slot)=id(pc_auto_candidate);
+                id(pc_auto_mode)=3;  // attesa nuova misura/stato, non successo presunto
+                id(pc_auto_post_until_ms)=millis()+((uint32_t)id(pc_auto_after_s))*1000u;
+                id(pc_auto_last_data_at_command_ms)=id(pc_auto_last_power_data_ms);
+                id(pc_auto_overlay_open)=false;
+                id(pc_auto_fire)=false;
+                id(pc_auto_candidate)=-1;
+                id(pc_page)=0;
+                id(pc_last_activity_ms)=millis();
+                id(pc_dirty)=true;
+            - drv2605.stop:
+                id: pc_haptic_driver
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+          else:
+            - lambda: |-
+                id(pc_auto_fire)=false;
+                id(pc_auto_mode)=0;
+                id(pc_auto_overlay_open)=false;
+                id(pc_auto_candidate)=-1;
+                id(pc_page)=0;
+                id(pc_dirty)=true;
+            - drv2605.stop:
+                id: pc_haptic_driver
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+
+  # Stato automatico: attesa stabile -> conferma -> richiesta OFF -> verifica.
+  - id: pc_auto_tick
+    mode: single
+    then:
+      - lambda: |-
+          const uint32_t now=millis();
+          id(pc_auto_haptic_event)=0;
+          id(pc_auto_fire)=false;
+          if (id(pc_boot_active) || id(pc_ota) || !id(pc_auto_enabled)) {
+            if (id(pc_auto_overlay_open)) id(pc_auto_abort_overlay)=true;
+            id(pc_auto_mode)=0;
+            return;
+          }
+          // Non avviare distacchi senza Home Assistant o con sensore non aggiornato.
+          const bool connected=id(pc_wifi).is_connected() && id(pc_api).is_connected_with_state_subscription();
+          const float total=id(pc_home_w).state;
+          const bool fresh=connected && std::isfinite(total) && total>=0.0f &&
+            id(pc_auto_last_power_data_ms)!=0 &&
+            (uint32_t)(now-id(pc_auto_last_power_data_ms))<=180000u;
+          if (!fresh) {
+            if (id(pc_auto_overlay_open)) id(pc_auto_abort_overlay)=true;
+            // Se era gia' stato chiesto un OFF, non procedere con altri carichi
+            // dopo una disconnessione senza avere il riscontro di stato.
+            if (id(pc_auto_mode)!=3) id(pc_auto_mode)=0;
+            id(pc_auto_candidate)=-1;
+            return;
+          }
+          int zone=(total>=${power_critical_w} && id(pc_auto_red))?2:
+                   ((total>=${power_warning_w} && id(pc_auto_yellow))?1:0);
+          // Isteresi per annullare: evita continue aperture vicino alla soglia.
+          if (id(pc_auto_mode)==2) {
+            const float limit=id(pc_auto_zone)==2?${power_critical_w}:${power_warning_w};
+            if (total<limit-100.0f || zone<id(pc_auto_zone)) {
+              id(pc_auto_mode)=0;
+              id(pc_auto_candidate)=-1;
+              id(pc_auto_abort_overlay)=true;
+              return;
+            }
+          }
+          if (!zone) {
+            id(pc_auto_mode)=0;
+            id(pc_auto_candidate)=-1;
+            id(pc_auto_attempted_mask)=0;
+            id(pc_auto_zone)=0;
+            id(pc_auto_zone_since_ms)=now;
+            if (id(pc_auto_overlay_open)) id(pc_auto_abort_overlay)=true;
+            return;
+          }
+          if (id(pc_auto_mode)==3) {
+            if ((int32_t)(now-id(pc_auto_post_until_ms))<0) return;
+            // Senza un nuovo dato totale E il riscontro OFF non distaccare altro.
+            if (id(pc_auto_last_power_data_ms)==id(pc_auto_last_data_at_command_ms)) return;
+            const std::string states[14]={
+              id(pc_control_state_01).state,id(pc_control_state_02).state,id(pc_control_state_03).state,id(pc_control_state_04).state,
+              id(pc_control_state_05).state,id(pc_control_state_06).state,id(pc_control_state_07).state,id(pc_control_state_08).state,
+              id(pc_control_state_09).state,id(pc_control_state_10).state,id(pc_control_state_11).state,id(pc_control_state_12).state,
+              id(pc_control_state_13).state,id(pc_control_state_14).state};
+            if (id(pc_auto_last_command_slot)<0 || id(pc_auto_last_command_slot)>=14 ||
+                states[id(pc_auto_last_command_slot)]!="off") return;
+            id(pc_auto_mode)=0;
+          }
+          if (id(pc_auto_mode)==2) {
+            const int rem=(int)((((int32_t)(id(pc_auto_deadline_ms)-now))+999)/1000);
+            if (rem>0 && rem!=id(pc_auto_last_haptic_sec)) {
+              id(pc_auto_last_haptic_sec)=rem;
+              id(pc_auto_haptic_event)=rem<=5?2:1;
+            }
+            if (rem<=0) id(pc_auto_fire)=true;
+            return;
+          }
+          // Mai aprire una nuova conferma automatica mentre si cambia
+          // una regola, una priorita' o un permesso (modale NO AUTO).
+          if (id(pc_page)==1 || id(pc_page)==4 || id(pc_page)==6) {
+            if (id(pc_auto_mode)!=3) id(pc_auto_mode)=0;
+            return;
+          }
+          // La sospensione si applica dopo ANNULLA o rotazione dell'encoder.
+          if ((int32_t)(now-id(pc_auto_suspended_until_ms))<0) return;
+          if (id(pc_page)==4 && id(pc_auto_edit)>=0) return;
+          if (zone!=id(pc_auto_zone) || id(pc_auto_mode)!=1) {
+            id(pc_auto_zone)=zone;
+            id(pc_auto_zone_since_ms)=now;
+            id(pc_auto_mode)=1;
+            return;
+          }
+          if ((uint32_t)(now-id(pc_auto_zone_since_ms))<(uint32_t)id(pc_auto_delay_s)*1000u) return;
+          const char *names[14]={
+            "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+            "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+            "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+            "${appliance_13_name}","${appliance_14_name}"};
+          const char *sensors[14]={
+            "${appliance_01_sensor}","${appliance_02_sensor}","${appliance_03_sensor}","${appliance_04_sensor}",
+            "${appliance_05_sensor}","${appliance_06_sensor}","${appliance_07_sensor}","${appliance_08_sensor}",
+            "${appliance_09_sensor}","${appliance_10_sensor}","${appliance_11_sensor}","${appliance_12_sensor}",
+            "${appliance_13_sensor}","${appliance_14_sensor}"};
+          const char *controls[14]={
+            "${appliance_01_switch}","${appliance_02_switch}","${appliance_03_switch}","${appliance_04_switch}",
+            "${appliance_05_switch}","${appliance_06_switch}","${appliance_07_switch}","${appliance_08_switch}",
+            "${appliance_09_switch}","${appliance_10_switch}","${appliance_11_switch}","${appliance_12_switch}",
+            "${appliance_13_switch}","${appliance_14_switch}"};
+          const std::string states[14]={
+            id(pc_control_state_01).state,id(pc_control_state_02).state,id(pc_control_state_03).state,id(pc_control_state_04).state,
+            id(pc_control_state_05).state,id(pc_control_state_06).state,id(pc_control_state_07).state,id(pc_control_state_08).state,
+            id(pc_control_state_09).state,id(pc_control_state_10).state,id(pc_control_state_11).state,id(pc_control_state_12).state,
+            id(pc_control_state_13).state,id(pc_control_state_14).state};
+          const float powers[14]={
+            id(pc_w_01).state,id(pc_w_02).state,id(pc_w_03).state,id(pc_w_04).state,
+            id(pc_w_05).state,id(pc_w_06).state,id(pc_w_07).state,id(pc_w_08).state,
+            id(pc_w_09).state,id(pc_w_10).state,id(pc_w_11).state,id(pc_w_12).state,
+            id(pc_w_13).state,id(pc_w_14).state};
+          const int priorities[14]={
+            id(pc_priority_01),id(pc_priority_02),id(pc_priority_03),id(pc_priority_04),
+            id(pc_priority_05),id(pc_priority_06),id(pc_priority_07),id(pc_priority_08),
+            id(pc_priority_09),id(pc_priority_10),id(pc_priority_11),id(pc_priority_12),
+            id(pc_priority_13),id(pc_priority_14)};
+          const int allowed[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),id(pc_auto_allow_13),id(pc_auto_allow_14)};
+          int best=-1;
+          for (int i=0;i<14;i++) {
+            if (!allowed[i] || (id(pc_auto_attempted_mask)&(1u<<i)) ||
+                strncmp(sensors[i],"sensor.pc_non_configurato_",26)==0 ||
+                !std::isfinite(powers[i]) || powers[i]<10.0f) continue;
+            bool on=false;
+            if (strncmp(controls[i],"switch.",7)==0 &&
+                strncmp(controls[i],"switch.pc_non_configurato_",26)!=0) on=states[i]=="on";
+            else if (strncmp(controls[i],"climate.",8)==0)
+              on=!states[i].empty() && states[i]!="off" && states[i]!="unknown" && states[i]!="unavailable";
+            if (!on) continue;
+            if (best<0 || priorities[i]<priorities[best] ||
+                (priorities[i]==priorities[best] && strcmp(names[i],names[best])<0)) best=i;
+          }
+          if (best<0) { id(pc_auto_mode)=0; return; }
+          id(pc_auto_candidate)=best;
+          id(pc_auto_mode)=2;
+          id(pc_auto_deadline_ms)=now+(uint32_t)id(pc_auto_confirm_s)*1000u;
+          id(pc_auto_last_haptic_sec)=-1;
+          id(pc_auto_overlay_open)=false;
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_abort_overlay);'
+          then:
+            - drv2605.stop:
+                id: pc_haptic_driver
+            - lambda: |-
+                id(pc_auto_abort_overlay)=false;
+                id(pc_auto_overlay_open)=false;
+                id(pc_page)=0;
+                id(pc_dirty)=true;
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_mode)==2 && !id(pc_auto_overlay_open) && !id(pc_ota);'
+          then:
+            - lambda: |-
+                id(pc_auto_overlay_open)=true;
+                id(pc_page)=5;
+            - lvgl.page.show:
+                id: pc_confirm_page
+                animation: NONE
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_mode)==2 && id(pc_auto_overlay_open) && !id(pc_ota);'
+          then:
+            - lambda: |-
+                const char *names[14]={
+                  "${appliance_01_name}","${appliance_02_name}","${appliance_03_name}","${appliance_04_name}",
+                  "${appliance_05_name}","${appliance_06_name}","${appliance_07_name}","${appliance_08_name}",
+                  "${appliance_09_name}","${appliance_10_name}","${appliance_11_name}","${appliance_12_name}",
+                  "${appliance_13_name}","${appliance_14_name}"};
+                const int s=id(pc_auto_candidate);
+                if (s>=0 && s<14) lv_label_set_text(id(pc_auto_candidate_label),names[s]);
+                const int32_t left=(int32_t)(id(pc_auto_deadline_ms)-millis());
+                const int remain=left>0?(left+999)/1000:0;
+                char buf[20]; snprintf(buf,sizeof(buf),"%d s",remain);
+                lv_label_set_text(id(pc_auto_seconds_label),buf);
+                lv_label_set_text(id(pc_auto_zone_label),id(pc_auto_zone)==2?"ZONA ROSSA":"ZONA GIALLA");
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_haptic_event)==1 && id(pc_auto_mode)==2 && !id(pc_ota);'
+          then:
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 7
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_haptic_event)==2 && id(pc_auto_mode)==2 && !id(pc_ota);'
+          then:
+            - drv2605.play_effect:
+                id: pc_haptic_driver
+                effect: 10
+      - if:
+          condition:
+            lambda: 'return id(pc_auto_fire)==true;'
+          then:
+            - script.execute: pc_auto_send_off
+
+  - id: pc_refresh
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active)) return;
+          id(pc_dirty) = false;
+          const char *names[14] = {
+            "${appliance_01_name}",
+            "${appliance_02_name}",
+            "${appliance_03_name}",
+            "${appliance_04_name}",
+            "${appliance_05_name}",
+            "${appliance_06_name}",
+            "${appliance_07_name}",
+            "${appliance_08_name}",
+            "${appliance_09_name}",
+            "${appliance_10_name}",
+            "${appliance_11_name}",
+            "${appliance_12_name}",
+            "${appliance_13_name}",
+            "${appliance_14_name}"
+          };
+          const char *entities[14] = {
+            "${appliance_01_sensor}",
+            "${appliance_02_sensor}",
+            "${appliance_03_sensor}",
+            "${appliance_04_sensor}",
+            "${appliance_05_sensor}",
+            "${appliance_06_sensor}",
+            "${appliance_07_sensor}",
+            "${appliance_08_sensor}",
+            "${appliance_09_sensor}",
+            "${appliance_10_sensor}",
+            "${appliance_11_sensor}",
+            "${appliance_12_sensor}",
+            "${appliance_13_sensor}",
+            "${appliance_14_sensor}"
+          };
+          const char *controls[14] = {
+            "${appliance_01_switch}",
+            "${appliance_02_switch}",
+            "${appliance_03_switch}",
+            "${appliance_04_switch}",
+            "${appliance_05_switch}",
+            "${appliance_06_switch}",
+            "${appliance_07_switch}",
+            "${appliance_08_switch}",
+            "${appliance_09_switch}",
+            "${appliance_10_switch}",
+            "${appliance_11_switch}",
+            "${appliance_12_switch}",
+            "${appliance_13_switch}",
+            "${appliance_14_switch}"
+          };
+          const float values[14] = {
+            id(pc_w_01).state,
+            id(pc_w_02).state,
+            id(pc_w_03).state,
+            id(pc_w_04).state,
+            id(pc_w_05).state,
+            id(pc_w_06).state,
+            id(pc_w_07).state,
+            id(pc_w_08).state,
+            id(pc_w_09).state,
+            id(pc_w_10).state,
+            id(pc_w_11).state,
+            id(pc_w_12).state,
+            id(pc_w_13).state,
+            id(pc_w_14).state
+          };
+          int *colors[14] = {&id(pc_color_01), &id(pc_color_02), &id(pc_color_03), &id(pc_color_04), &id(pc_color_05), &id(pc_color_06), &id(pc_color_07), &id(pc_color_08), &id(pc_color_09), &id(pc_color_10), &id(pc_color_11), &id(pc_color_12), &id(pc_color_13), &id(pc_color_14)};
+          int *priorities[14] = {&id(pc_priority_01), &id(pc_priority_02), &id(pc_priority_03), &id(pc_priority_04), &id(pc_priority_05), &id(pc_priority_06), &id(pc_priority_07), &id(pc_priority_08), &id(pc_priority_09), &id(pc_priority_10), &id(pc_priority_11), &id(pc_priority_12), &id(pc_priority_13), &id(pc_priority_14)};
+          // Palette modificabile dal Setup. "Altro" rimane grigio.
+          const uint32_t palette[14] = {
+            0x38BDF8,0xF97316,0xA78BFA,0x22C55E,0xF43F5E,
+            0xEAB308,0x14B8A6,0x60A5FA,0xD946EF,0xFB7185,
+            0x84CC16,0xF59E0B,0x06B6D4,0xC084FC
+          };
+          // Stato letto direttamente da HA, senza automazioni push.
+          // Ogni slot dispone del suo stato nativo; i placeholder sono monitor-only.
+          const std::string states[14] = {
+            id(pc_control_state_01).state,
+            id(pc_control_state_02).state,
+            id(pc_control_state_03).state,
+            id(pc_control_state_04).state,
+            id(pc_control_state_05).state,
+            id(pc_control_state_06).state,
+            id(pc_control_state_07).state,
+            id(pc_control_state_08).state,
+            id(pc_control_state_09).state,
+            id(pc_control_state_10).state,
+            id(pc_control_state_11).state,
+            id(pc_control_state_12).state,
+            id(pc_control_state_13).state,
+            id(pc_control_state_14).state
+          };
+          bool configured[14], home_active[14];
+          float measured[14];
+          for (int i=0;i<14;i++) {
+            configured[i] = strncmp(entities[i], "sensor.pc_non_configurato_", 26) != 0;
+            float w = configured[i] && std::isfinite(values[i]) && values[i] >= 0
+                      ? values[i] : 0.0f;
+            if (!configured[i]) home_active[i] = false;
+            else if ((controls[i][0] == '\0' || strncmp(controls[i], "switch.pc_non_configurato_", 26) == 0)) home_active[i] = w > 0.0f;
+            else if (strncmp(controls[i], "climate.", 8) == 0) {
+              const auto &st=states[i];
+              home_active[i] = !st.empty() && st != "off" && st != "unknown" && st != "unavailable";
+            } else home_active[i] = states[i] == "on";
+            // Solo i dispositivi visibili partecipano alla composizione dell'anello;
+            // le misure degli altri restano assorbite dalla quota "Altro".
+            measured[i] = home_active[i] ? w : 0.0f;
+          }
+          // In Elenco e Setup si possono sempre selezionare gli slot configurati.
+          if (!configured[id(pc_selected)]) {
+            for (int i=0;i<14;i++) if (configured[i]) { id(pc_selected)=i; break; }
+          }
+          int s = id(pc_selected);
+          bool total_ok = std::isfinite(id(pc_home_w).state) && id(pc_home_w).state >= 0;
+          float home = total_ok ? id(pc_home_w).state : 0.0f;
+          float listed = 0.0f;
+          for (float w:measured) listed += w;
+          float other = std::max(0.0f, home - listed);
+          if (!total_ok) {
+            if (std::isfinite(id(pc_other_w).state)) id(pc_other_w).publish_state(NAN);
+          } else if (!std::isfinite(id(pc_other_w).state) ||
+                     fabsf(id(pc_other_w).state-other)>=1.0f ||
+                     id(pc_learn_last_publish_ms)!=id(pc_auto_last_power_data_ms)) {
+            id(pc_other_w).publish_state(other);
+            id(pc_learn_last_publish_ms)=id(pc_auto_last_power_data_ms);
+          }
+          // Se la somma supera il totale (misure non sincrone / inclusioni),
+          // normalizziamo sul maggiore per non produrre segmenti negativi.
+          float denominator = std::max(home, listed);
+          char tmp[64];
+          if (id(pc_page) == 0) {
+            if (total_ok) snprintf(tmp,sizeof(tmp),"%.0f W",home);
+            else snprintf(tmp,sizeof(tmp),"-- W");
+            lv_label_set_text(id(pc_total_label),tmp);
+            // Gli archi hanno ampiezza FISSA; la parte colorata cresce dentro
+            // il solo settore pertinente, senza ricolorare l'intero gauge.
+            const float gw=std::max(0.0f,home);
+            const float limit=(float)${power_limit_w};
+            const float warn=(float)${power_warning_w};
+            const float crit=(float)${power_critical_w};
+            // Gli angoli sono calcolati dalle soglie configurabili, una sola volta.
+            // Con le impostazioni attuali: verde 135..356, giallo 356..37, rosso 37..45.
+            static bool sectors_initialized=false;
+            if (!sectors_initialized && limit>0 && warn>0 && crit>warn && limit>crit) {
+              const int boundary_green=(135+(int)lroundf(270.0f*warn/limit))%360;
+              const int boundary_yellow=(135+(int)lroundf(270.0f*crit/limit))%360;
+              lv_arc_set_bg_angles(id(pc_outer_green),135,boundary_green);
+              lv_arc_set_bg_angles(id(pc_outer_yellow),boundary_green,boundary_yellow);
+              lv_arc_set_bg_angles(id(pc_outer_red),boundary_yellow,45);
+              sectors_initialized=true;
+            }
+            auto sector_pct = [&](float low,float high) -> int {
+              if (!(high>low)) return 0;
+              return (int)std::lround(100.0f*std::max(0.0f,std::min(high-low,gw-low))/(high-low));
+            };
+            const int green=sector_pct(0.0f,warn);
+            const int yellow=sector_pct(warn,crit);
+            const int red=sector_pct(crit,limit);
+            lv_arc_set_value(id(pc_outer_green),green);
+            lv_arc_set_value(id(pc_outer_yellow),yellow);
+            lv_arc_set_value(id(pc_outer_red),red);
+            if (green>0) lv_obj_remove_flag(id(pc_outer_green),LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(pc_outer_green),LV_OBJ_FLAG_HIDDEN);
+            if (yellow>0) lv_obj_remove_flag(id(pc_outer_yellow),LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(pc_outer_yellow),LV_OBJ_FLAG_HIDDEN);
+            if (red>0) lv_obj_remove_flag(id(pc_outer_red),LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(pc_outer_red),LV_OBJ_FLAG_HIDDEN);
+            lv_obj_t *arcs[15] = {id(pc_seg_01), id(pc_seg_02), id(pc_seg_03), id(pc_seg_04), id(pc_seg_05), id(pc_seg_06), id(pc_seg_07), id(pc_seg_08), id(pc_seg_09), id(pc_seg_10), id(pc_seg_11), id(pc_seg_12), id(pc_seg_13), id(pc_seg_14), id(pc_seg_other)};
+
+            // Home: solo carichi attivi, dal consumo istantaneo maggiore al minore.
+            int order[14]; int count=0;
+            for (int i=0;i<14;i++) if (home_active[i]) order[count++]=i;
+            for (int i=0;i<count-1;i++) for (int j=i+1;j<count;j++) {
+              if (measured[order[j]] > measured[order[i]]) {
+                int t=order[i]; order[i]=order[j]; order[j]=t;
+              }
+            }
+            // Senza scelta manuale parti dall'apparecchio piu' energivoro.
+            // Se non ce ne sono e il totale e' valido, seleziona il grigio.
+            // Mantieni la selezione manuale (anche il grigio) finche' e' visibile.
+            const bool gray_available = total_ok && other>0.0f;
+            const bool selection_visible = id(pc_home_other_selected)
+              ? gray_available : (s>=0 && s<14 && home_active[s]);
+            if (!id(pc_home_selection_explicit) || !selection_visible) {
+              if (count>0) {
+                id(pc_selected)=order[0];
+                id(pc_home_other_selected)=false;
+              } else {
+                id(pc_home_other_selected)=gray_available;
+              }
+              id(pc_home_selection_explicit)=false;
+            }
+            s=id(pc_selected);
+
+            // Tutti i segmenti interni usano ESATTAMENTE lo stesso arco del gauge esterno:
+            // 135 -> 45 = 270 gradi, con apertura inferiore.
+            const int ARC_START = 135;
+            const int ARC_SWEEP = 270;
+            for (int i=0;i<15;i++) lv_obj_add_flag(arcs[i],LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(pc_selected_arc), LV_OBJ_FLAG_HIDDEN);
+
+            int used_angle=0;
+            int selected_start=-1, selected_end=-1;
+            for (int rank=0; rank<count; rank++) {
+              int idx=order[rank];
+              float portion=measured[idx];
+              if (denominator<=0 || portion<=0) continue;
+              int span=(int)std::lround((float)ARC_SWEEP*portion/denominator);
+              // Conserva almeno un grado per la quota grigia, se presente:
+              // deve restare visibile e selezionabile anche con molti carichi.
+              const int available=ARC_SWEEP-used_angle-(gray_available ? 1 : 0);
+              if (available<=0) break;
+              span=std::max(1,std::min(available,span));
+              int a0=(ARC_START+used_angle)%360;
+              int a1=(ARC_START+used_angle+span)%360;
+              lv_arc_set_bg_angles(arcs[idx],a0,a1);
+              lv_obj_set_style_arc_color(arcs[idx],lv_color_hex(palette[*colors[idx]%14]),LV_PART_MAIN);
+              lv_obj_remove_flag(arcs[idx],LV_OBJ_FLAG_HIDDEN);
+              if (idx==s) { selected_start=a0; selected_end=a1; }
+              used_angle+=span;
+              if (used_angle>=ARC_SWEEP) break;
+            }
+
+            // Quota non attribuita sempre per ultima, in grigio.
+            if (other>0 && denominator>0 && used_angle<ARC_SWEEP) {
+              // Chiude esattamente l'anello fino a 45 gradi (gli scarti di
+              // arrotondamento degli altri segmenti finiscono qui).
+              const int span=ARC_SWEEP-used_angle;
+              const int a0=(ARC_START+used_angle)%360;
+              const int a1=(ARC_START+used_angle+span)%360;
+              lv_arc_set_bg_angles(id(pc_seg_other),a0,a1);
+              lv_obj_set_style_arc_color(id(pc_seg_other),lv_color_hex(0x64748B),LV_PART_MAIN);
+              lv_obj_remove_flag(id(pc_seg_other),LV_OBJ_FLAG_HIDDEN);
+              if (id(pc_home_other_selected)) {
+                selected_start=a0;
+                selected_end=a1;
+              }
+              used_angle+=span;
+            }
+
+            // Anello sottile centrale: evidenzia esclusivamente il dispositivo selezionato.
+            if (selected_start>=0 && selected_end>=0) {
+              lv_arc_set_bg_angles(id(pc_selected_arc),selected_start,selected_end);
+              lv_obj_set_style_arc_color(id(pc_selected_arc),
+                lv_color_hex(id(pc_home_other_selected) ? 0x94A3B8 : palette[*colors[s]%14]),LV_PART_MAIN);
+              lv_obj_remove_flag(id(pc_selected_arc),LV_OBJ_FLAG_HIDDEN);
+            }
+
+            if (id(pc_home_other_selected) && gray_available) {
+              lv_label_set_text(id(pc_selected_name),"ALTRI CONSUMI");
+              snprintf(tmp,sizeof(tmp),"%.0f W  |  %.0f%%",other,
+                denominator>0 ? 100.0f*other/denominator : 0.0f);
+              lv_label_set_text(id(pc_selected_power),tmp);
+              lv_obj_set_style_text_color(id(pc_selected_name),lv_color_hex(0x94A3B8),LV_PART_MAIN);
+            } else if (count>0 && home_active[s]) {
+              snprintf(tmp,sizeof(tmp),"%s", names[s]);
+              lv_label_set_text(id(pc_selected_name),tmp);
+              if (std::isfinite(values[s]) && values[s]>=0)
+                snprintf(tmp,sizeof(tmp),"%.0f W  |  %.0f%%",values[s],denominator>0?100.0f*values[s]/denominator:0.0f);
+              else snprintf(tmp,sizeof(tmp),"Consumo N/D");
+              lv_label_set_text(id(pc_selected_power),tmp);
+              lv_obj_set_style_text_color(id(pc_selected_name),lv_color_hex(palette[*colors[s]%14]),LV_PART_MAIN);
+            } else {
+              lv_label_set_text(id(pc_selected_name),"Nessun dispositivo attivo");
+              lv_label_set_text(id(pc_selected_power),total_ok ? "0 W" : "-- W");
+            }
+            if (total_ok && listed>home+25)
+              lv_label_set_text(id(pc_note),"Somma sensori > totale");
+            else lv_label_set_text(id(pc_note),"GRIGIO = ALTRI CONSUMI");
+          } else if (id(pc_page)==2) {
+            // Sfondo colorato in tono scuro: 75% blu notte + 25% colore
+            // scelto nello Setup. Testi chiari anche con tinte molto vivaci.
+            const uint32_t accent = configured[s]
+              ? palette[((*colors[s] % 14) + 14) % 14] : 0x020617;
+            const uint32_t base = 0x020617;
+            const uint32_t br = (((base >> 16) & 0xFF) * 75 + ((accent >> 16) & 0xFF) * 25) / 100;
+            const uint32_t bg = (((base >> 8) & 0xFF) * 75 + ((accent >> 8) & 0xFF) * 25) / 100;
+            const uint32_t bb = ((base & 0xFF) * 75 + (accent & 0xFF) * 25) / 100;
+            const uint32_t detail_bg = (br << 16) | (bg << 8) | bb;
+            // Non ridisegnare lo sfondo quando il colore non e' cambiato.
+            static uint32_t last_detail_bg = 0xFFFFFFFF;
+            if (detail_bg != last_detail_bg) {
+              lv_obj_set_style_bg_color(id(appliances_page)->obj, lv_color_hex(detail_bg), LV_PART_MAIN);
+              last_detail_bg = detail_bg;
+            }
+            lv_label_set_text(id(pc_device_name),configured[s]?names[s]:"NESSUN DISPOSITIVO");
+            lv_obj_set_style_text_color(id(pc_device_name), lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+            if (configured[s] && std::isfinite(values[s]) && values[s]>=0)
+              snprintf(tmp,sizeof(tmp),"%.0f W",values[s]);
+            else snprintf(tmp,sizeof(tmp),"Consumo N/D");
+            lv_label_set_text(id(pc_device_power),tmp);
+            snprintf(tmp,sizeof(tmp),"PRIORITA' %d / 14",*priorities[s]);
+            lv_label_set_text(id(pc_device_priority),tmp);
+            lv_label_set_text(id(pc_control_type),(controls[s][0] && strncmp(controls[s], "switch.pc_non_configurato_", 26) != 0) ?
+              (strncmp(controls[s],"climate.",8)==0 ? "CLIMA | TIENI PREMUTO" : "SWITCH | TIENI PREMUTO")
+              : "SOLO MONITORAGGIO | nessun comando");
+          } else if (id(pc_page)==1) {
+            const auto &order=id(pc_prio_order);
+            const int n=(int)order.size();
+            if (n == 0) {
+              lv_label_set_text(id(pc_prio_hint),"NESSUN DISPOSITIVO COMANDABILE");
+            } else if (id(pc_prio_edit_slot)>=0) {
+              lv_label_set_text(id(pc_prio_hint),"GIU: NO AUTO | SU: AUTO");
+            } else if (id(pc_prio_saved_ms)!=0 && millis()-id(pc_prio_saved_ms)<1800) {
+              lv_label_set_text(id(pc_prio_hint),"PRIORITA' SALVATE");
+            } else {
+              lv_label_set_text(id(pc_prio_hint),"RUOTA: SCORRI | TOCCA: SPOSTA");
+            }
+            lv_obj_t *buttons[4]={id(pc_prio_btn_0),id(pc_prio_btn_1),id(pc_prio_btn_2),id(pc_prio_btn_3)};
+            lv_obj_t *labels[4]={id(pc_prio_row_0),id(pc_prio_row_1),id(pc_prio_row_2),id(pc_prio_row_3)};
+            lv_obj_t *badges[4]={id(pc_prio_badge_0),id(pc_prio_badge_1),id(pc_prio_badge_2),id(pc_prio_badge_3)};
+            for (int row=0;row<4;row++) {
+              const int pos=id(pc_prio_top)+row;
+              if (pos>=n) { lv_obj_add_flag(buttons[row],LV_OBJ_FLAG_HIDDEN); continue; }
+              lv_obj_remove_flag(buttons[row],LV_OBJ_FLAG_HIDDEN);
+              const int slot=order[pos];
+              const int allow[14]={id(pc_auto_allow_01),id(pc_auto_allow_02),id(pc_auto_allow_03),id(pc_auto_allow_04),
+                id(pc_auto_allow_05),id(pc_auto_allow_06),id(pc_auto_allow_07),id(pc_auto_allow_08),
+                id(pc_auto_allow_09),id(pc_auto_allow_10),id(pc_auto_allow_11),id(pc_auto_allow_12),
+                id(pc_auto_allow_13),id(pc_auto_allow_14)};
+              snprintf(tmp,sizeof(tmp),"%02d %.17s",pos+1,names[slot]);
+              lv_label_set_text(labels[row],tmp);
+              lv_label_set_text(badges[row],allow[slot]?"":"NO AUTO");
+              const bool editing=(id(pc_prio_edit_slot)==slot);
+              const bool cursor=(id(pc_prio_cursor)==pos);
+              const uint32_t bg=editing?0x115E59:cursor?0x1E3A5F:allow[slot]?0x0F172A:0x29202A;
+              const uint32_t border=editing?0x22C55E:cursor?0x38BDF8:allow[slot]?0x334155:0x7F1D1D;
+              lv_obj_set_style_bg_color(buttons[row],lv_color_hex(bg),LV_PART_MAIN);
+              lv_obj_set_style_border_color(buttons[row],lv_color_hex(border),LV_PART_MAIN);
+              lv_obj_set_style_text_color(labels[row],lv_color_hex(editing?0x86EFAC:0xE2E8F0),LV_PART_MAIN);
+            }
+          } else if (id(pc_page)==3) {
+            const auto &order=id(pc_color_order);
+            const int n=(int)order.size();
+            const bool editing=id(pc_color_edit_slot)>=0;
+            if (n==0) lv_label_set_text(id(pc_color_hint),"NESSUN DISPOSITIVO CONFIGURATO");
+            else if (editing) lv_label_set_text(id(pc_color_hint),"RUOTA: CAMBIA COLORE");
+            else if (id(pc_color_saved_ms)!=0 && millis()-id(pc_color_saved_ms)<1800)
+              lv_label_set_text(id(pc_color_hint),"COLORE SALVATO");
+            else lv_label_set_text(id(pc_color_hint),"RUOTA: SCORRI | TOCCA: MODIFICA");
+            lv_obj_t *buttons[4]={id(pc_color_btn_0),id(pc_color_btn_1),id(pc_color_btn_2),id(pc_color_btn_3)};
+            lv_obj_t *labels[4]={id(pc_color_row_0),id(pc_color_row_1),id(pc_color_row_2),id(pc_color_row_3)};
+            for (int row=0;row<4;row++) {
+              const int pos=id(pc_color_top)+row;
+              if (pos>=n) { lv_obj_add_flag(buttons[row],LV_OBJ_FLAG_HIDDEN); continue; }
+              lv_obj_remove_flag(buttons[row],LV_OBJ_FLAG_HIDDEN);
+              const int slot=order[pos];
+              const bool is_editing=(id(pc_color_edit_slot)==slot);
+              const int cidx=is_editing ? id(pc_color_draft) : *colors[slot];
+              const uint32_t color=palette[(cidx%14+14)%14];
+              snprintf(tmp,sizeof(tmp),"%02d  %s",pos+1,names[slot]);
+              lv_label_set_text(labels[row],tmp);
+              lv_obj_set_style_bg_color(buttons[row],lv_color_hex(color),LV_PART_MAIN);
+              lv_obj_set_style_border_color(buttons[row],lv_color_hex(is_editing?0xFFFFFF:
+                id(pc_color_cursor)==pos?0x38BDF8:color),LV_PART_MAIN);
+              lv_obj_set_style_border_width(buttons[row],is_editing?3:2,LV_PART_MAIN);
+              const uint32_t r=(color>>16)&0xFF, g=(color>>8)&0xFF, b=color&0xFF;
+              const uint32_t luminosity=(r*299+g*587+b*114)/1000;
+              lv_obj_set_style_text_color(labels[row],lv_color_hex(luminosity>160?0x020617:0xFFFFFF),LV_PART_MAIN);
+            }
+          } else if (id(pc_page)==4) {
+            const char *titles[8]={"AUTOMATICO","ZONA GIALLA","ZONA ROSSA","RITARDO","CONFERMA","SOSPENSIONE","DOPO DISTACCO","SOGLIA APPREND."};
+            const int values[8]={id(pc_auto_enabled),id(pc_auto_yellow),id(pc_auto_red),
+              id(pc_auto_delay_s),id(pc_auto_confirm_s),id(pc_auto_suspend_s),id(pc_auto_after_s),
+              id(pc_learn_min_rise_w)};
+            lv_obj_t *buttons[4]={id(pc_auto_btn_0),id(pc_auto_btn_1),id(pc_auto_btn_2),id(pc_auto_btn_3)};
+            lv_obj_t *labels[4]={id(pc_auto_row_0),id(pc_auto_row_1),id(pc_auto_row_2),id(pc_auto_row_3)};
+            for (int row=0;row<4;row++) {
+              const int n=id(pc_auto_top)+row;
+              if (n>=8) { lv_obj_add_flag(buttons[row],LV_OBJ_FLAG_HIDDEN); continue; }
+              lv_obj_remove_flag(buttons[row],LV_OBJ_FLAG_HIDDEN);
+              const bool editing=id(pc_auto_edit)==n;
+              const int v=editing?id(pc_auto_draft):values[n];
+              if (n==0 || n==1 || n==2)
+                snprintf(tmp,sizeof(tmp),"%s: %s",titles[n],v?"ON":"OFF");
+              else if (n==7) snprintf(tmp,sizeof(tmp),"%s: %d W",titles[n],v);
+              else snprintf(tmp,sizeof(tmp),"%s: %d s",titles[n],v);
+              lv_label_set_text(labels[row],tmp);
+              lv_obj_set_style_bg_color(buttons[row],lv_color_hex(editing?0x115E59:id(pc_auto_cursor)==n?0x1E3A5F:0x0F172A),LV_PART_MAIN);
+              lv_obj_set_style_border_color(buttons[row],lv_color_hex(editing?0x22C55E:id(pc_auto_cursor)==n?0x38BDF8:0x334155),LV_PART_MAIN);
+            }
+            if (id(pc_auto_edit)>=0) lv_label_set_text(id(pc_auto_hint),"RUOTA: MODIFICA | SALVA DOPO 3s");
+            else if (id(pc_auto_saved_ms) && millis()-id(pc_auto_saved_ms)<1800)
+              lv_label_set_text(id(pc_auto_hint),"IMPOSTAZIONE SALVATA");
+            else lv_label_set_text(id(pc_auto_hint),"RUOTA: SCORRI | TOCCA: MODIFICA");
+          }
+
+  # Animazione e diagnostica BOOT: chiamata a 200ms solo fino all'ingresso in Home.
+  # Nessun refresh dei gauge e nessun invio continuo da Home Assistant.
+  - id: pc_boot_tick
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(pc_boot_active) || !id(pc_boot_ui_ready) || id(pc_ota)) return;
+          const uint32_t now = millis();
+
+          // Ticker leggero: sposta una sola label dentro un contenitore ritagliato.
+          int x = id(pc_boot_ticker_x) - 12;
+          if (x < -lv_obj_get_width(id(pc_boot_ticker))) x = 322;
+          id(pc_boot_ticker_x) = x;
+          lv_obj_set_x(id(pc_boot_ticker), x);
+
+          // Le fasi sono REALI: una connessione di soli log non equivale ad HA.
+          const bool wifi_ok = id(pc_wifi).is_connected();
+          const bool api_ok = wifi_ok && id(pc_api).is_connected_with_state_subscription();
+          const bool data_ok = api_ok && id(pc_home_w).has_state() &&
+                               std::isfinite(id(pc_home_w).state) && id(pc_home_w).state >= 0.0f;
+
+          int stage = 0;
+          int progress = 12;
+          const char *msg = "CONNESSIONE WI-FI...";
+          if (wifi_ok) { stage = 1; progress = 35; msg = "CONNESSIONE HOME ASSISTANT..."; }
+          if (api_ok)  { stage = 2; progress = 65; msg = "ATTESA PRIMO DATO ENERGIA..."; }
+          if (data_ok) { stage = 3; progress = 100; msg = "SISTEMA PRONTO"; }
+
+          if (progress != id(pc_boot_progress_last)) {
+            lv_bar_set_value(id(pc_boot_progress), progress, LV_ANIM_OFF);
+            id(pc_boot_progress_last) = progress;
+          }
+          if (stage != id(pc_boot_step_last)) {
+            lv_label_set_text(id(pc_boot_status), msg);
+            lv_label_set_text(id(pc_boot_wifi_label), wifi_ok ? "WIFI OK" : "WIFI ...");
+            lv_label_set_text(id(pc_boot_api_label), api_ok ? "API OK" : "API ...");
+            lv_label_set_text(id(pc_boot_data_label), data_ok ? "DATI OK" : "DATI ...");
+            lv_obj_set_style_text_color(id(pc_boot_wifi_label), lv_color_hex(wifi_ok ? 0x22C55E : 0x94A3B8), LV_PART_MAIN);
+            lv_obj_set_style_text_color(id(pc_boot_api_label), lv_color_hex(api_ok ? 0x22C55E : 0x94A3B8), LV_PART_MAIN);
+            lv_obj_set_style_text_color(id(pc_boot_data_label), lv_color_hex(data_ok ? 0x22C55E : 0x94A3B8), LV_PART_MAIN);
+            id(pc_boot_step_last) = stage;
+          }
+
+          // Un secondo circa di pagina 'PRONTO', ma niente attesa artificiale
+          // se una delle connessioni non arriva.
+          if (data_ok) {
+            if (id(pc_boot_ready_ms) == 0) id(pc_boot_ready_ms) = now;
+            if ((uint32_t)(now - id(pc_boot_ready_ms)) >= 700 &&
+                (uint32_t)(now - id(pc_boot_start_ms)) >= 1600)
+              id(pc_boot_handoff_pending) = true;
+          } else id(pc_boot_ready_ms) = 0;
+
+          // Non lasciare il display intrappolato nel boot se HA e' spento.
+          if ((uint32_t)(now - id(pc_boot_start_ms)) >= 30000) {
+            if (!data_ok) lv_label_set_text(id(pc_boot_status), "MODALITA' OFFLINE");
+            id(pc_boot_handoff_pending) = true;
+          }
+      - if:
+          condition:
+            lambda: 'return id(pc_boot_handoff_pending) && !id(pc_ota);'
+          then:
+            - lambda: |-
+                id(pc_boot_active) = false;
+                id(pc_boot_handoff_pending) = false;
+                id(pc_page) = 0;
+                id(pc_home_selection_explicit) = false;
+                id(pc_last_activity_ms) = millis();
+                id(pc_dirty) = true;
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+            - script.execute: pc_status_refresh
+
+  # Mini barra in Home. Nessun canvas, nessun refresh dei gauge.
+  - id: pc_status_refresh
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(pc_ota) || id(pc_boot_active) || id(pc_page) != 0) return;
+
+          // BATTERIA: percentuale indicativa, arrotondata e aggiornata solo se diversa.
+          const float battery = id(pc_battery_percent).state;
+          const int battery_pct = std::isfinite(battery)
+            ? (int)lroundf(fmaxf(0.0f, fminf(100.0f, battery))) : -1;
+          if (battery_pct != id(pc_status_battery_last)) {
+            id(pc_status_battery_last) = battery_pct;
+            const uint32_t c = battery_pct < 0 ? 0x94A3B8 :
+              battery_pct <= 20 ? 0xEF4444 : battery_pct <= 40 ? 0xF59E0B : 0x22C55E;
+            lv_obj_set_style_bg_color(id(pc_battery_fill), lv_color_hex(c), LV_PART_MAIN);
+            lv_obj_set_width(id(pc_battery_fill), battery_pct < 0 ? 1 :
+              (battery_pct == 0 ? 1 : (battery_pct * 15 + 99) / 100));
+            char b[8];
+            if (battery_pct < 0) snprintf(b, sizeof(b), "--%%");
+            else snprintf(b, sizeof(b), "%d%%", battery_pct);
+            lv_label_set_text(id(pc_battery_text), b);
+            lv_obj_set_style_text_color(id(pc_battery_text), lv_color_hex(c), LV_PART_MAIN);
+          }
+
+          // WIFI: barrine colorate proporzionali al segnale, grigie senza rete.
+          const bool wifi_ok = id(pc_wifi).is_connected();
+          const float rssi = id(pc_wifi_rssi).state;
+          const int wifi_pct = wifi_ok && std::isfinite(rssi)
+            ? (int)lroundf(fmaxf(0.0f, fminf(100.0f, 2.0f * (rssi + 100.0f)))) : -1;
+          const int bars = wifi_pct < 0 ? 0 : wifi_pct >= 70 ? 3 : wifi_pct >= 35 ? 2 : 1;
+          if (wifi_pct != id(pc_status_wifi_last) || bars != id(pc_status_bars_last)) {
+            id(pc_status_wifi_last) = wifi_pct;
+            id(pc_status_bars_last) = bars;
+            const uint32_t good = 0x22C55E;
+            const uint32_t warn = 0xF59E0B;
+            const uint32_t off = 0x475569;
+            const uint32_t on_color = bars == 1 ? warn : good;
+            lv_obj_set_style_bg_color(id(pc_wifi_bar_1), lv_color_hex(bars>=1?on_color:off), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(pc_wifi_bar_2), lv_color_hex(bars>=2?on_color:off), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(pc_wifi_bar_3), lv_color_hex(bars>=3?on_color:off), LV_PART_MAIN);
+            char w[8];
+            if (wifi_pct < 0) snprintf(w, sizeof(w), "--%%");
+            else snprintf(w, sizeof(w), "%d%%", wifi_pct);
+            lv_label_set_text(id(pc_wifi_text), w);
+          }
+
+          // HA: client API con sottoscrizione agli stati (non un client solo log).
+          const int ha_ok = id(pc_api).is_connected_with_state_subscription() ? 1 : 0;
+          if (ha_ok != id(pc_status_ha_last)) {
+            id(pc_status_ha_last) = ha_ok;
+            const uint32_t color = ha_ok ? 0x22C55E : 0xEF4444;
+            lv_obj_set_style_bg_color(id(pc_ha_dot), lv_color_hex(color), LV_PART_MAIN);
+            lv_obj_set_style_text_color(id(pc_ha_text), lv_color_hex(color), LV_PART_MAIN);
+          }
+
+interval:
+  # Apprendimento a bassa frequenza; non rallenta il gauge.
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(pc_learn_pending) &&
+                (id(pc_ota) || !id(pc_learn_enabled).state ||
+                 (uint32_t)(millis()-id(pc_learn_since_ms))>=
+                   ((uint32_t)${learning_prompt_timeout_s})*1000u);
+          then:
+            - script.execute: pc_learn_close
+      - if:
+          condition:
+            lambda: 'return !id(pc_learn_pending) && id(pc_learn_enabled).state;'
+          then:
+            - script.execute: pc_learn_tick
+  - interval: 200ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_boot_active) && id(pc_boot_ui_ready) && !id(pc_ota);'
+          then:
+            - script.execute: pc_boot_tick
+  # Prima misura valida eventualmente arrivata mentre la boot page era visibile.
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_haptic_zone)<0 && !id(pc_boot_active) && !id(pc_ota);'
+          then:
+            - script.execute: pc_haptic_check
+  - interval: 1s
+    then:
+      - script.execute: pc_auto_tick
+  - interval: 5s
+    then:
+      - script.execute: pc_status_refresh
+  - interval: 1500ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_dirty) && !id(pc_ota) && !id(pc_boot_active);'
+          then:
+            - script.execute: pc_refresh
+  # Dopo 3 secondi dall'ULTIMA rotazione conferma la posizione e scrive le priorita'.
+  - interval: 250ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(pc_page)==1 && id(pc_prio_edit_slot)>=0 &&
+                     !id(pc_boot_active) && !id(pc_ota) &&
+                     (uint32_t)(millis()-id(pc_prio_last_move_ms))>=3000;
+          then:
+            - script.execute: pc_prio_commit
+      - if:
+          condition:
+            lambda: 'return id(pc_page)==1 && id(pc_prio_edit_slot)>=0 && !id(pc_ota);'
+          then:
+            - lambda: |-
+                const uint32_t elapsed=millis()-id(pc_prio_last_move_ms);
+                const int seconds=elapsed>=3000 ? 0 : (int)((2999-elapsed)/1000)+1;
+                char buf[24];
+                snprintf(buf,sizeof(buf),"SALVATAGGIO TRA %d s",seconds);
+                if (strcmp(lv_label_get_text(id(pc_prio_countdown)),buf)!=0)
+                  lv_label_set_text(id(pc_prio_countdown),buf);
+          else:
+            - lambda: |-
+                if (id(pc_page)==1 && strcmp(lv_label_get_text(id(pc_prio_countdown))," ")!=0)
+                  lv_label_set_text(id(pc_prio_countdown)," ");
+  # La mancata risposta NON autorizza MAI l'automatismo.
+  # Chiude solo la modale, senza mutare pc_auto_allow_XX.
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(pc_page)==6 && id(pc_prio_prompt_mode)!=0 &&
+                !id(pc_ota) && (uint32_t)(millis()-id(pc_prio_prompt_since_ms))>=25000u;
+          then:
+            - script.execute:
+                id: pc_prio_prompt_answer
+                accept: false
+  # IMPOSTAZIONI: salva solo dopo 3s senza rotazioni.
+  - interval: 250ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(pc_page)==4 && id(pc_auto_edit)>=0 && !id(pc_ota) &&
+                     (uint32_t)(millis()-id(pc_auto_last_move_ms))>=3000u;
+          then:
+            - script.execute: pc_auto_settings_commit
+  # COLORI: conferma solo dopo 3s senza rotazioni, come DISTACCO.
+  - interval: 250ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(pc_page)==3 && id(pc_color_edit_slot)>=0 &&
+                     !id(pc_boot_active) && !id(pc_ota) &&
+                     (uint32_t)(millis()-id(pc_color_last_move_ms))>=3000;
+          then:
+            - script.execute: pc_color_commit
+      - if:
+          condition:
+            lambda: 'return id(pc_page)==3 && id(pc_color_edit_slot)>=0 && !id(pc_ota);'
+          then:
+            - lambda: |-
+                const uint32_t elapsed=millis()-id(pc_color_last_move_ms);
+                const int seconds=elapsed>=3000 ? 0 : (int)((2999-elapsed)/1000)+1;
+                char buf[24];
+                snprintf(buf,sizeof(buf),"SALVATAGGIO TRA %d s",seconds);
+                if (strcmp(lv_label_get_text(id(pc_color_countdown)),buf)!=0)
+                  lv_label_set_text(id(pc_color_countdown),buf);
+          else:
+            - lambda: |-
+                if (id(pc_page)==3 && strcmp(lv_label_get_text(id(pc_color_countdown))," ")!=0)
+                  lv_label_set_text(id(pc_color_countdown)," ");
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(pc_ota_error) && (uint32_t)(millis()-id(pc_ota_failed_ms))>=1800;'
+          then:
+            - lambda: |-
+                id(pc_ota_error)=false;
+                id(pc_ota)=false;
+                id(pc_page)=0;
+                id(pc_home_selection_explicit)=false;
+                id(pc_last_activity_ms)=millis();
+                id(pc_dirty)=true;
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+  # Timeout UI: solo interazioni utente aggiornano pc_last_activity_ms.
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return !id(pc_ota) && !id(pc_boot_active) && id(pc_page)!=0 &&
+                     id(pc_page)!=5 && id(pc_page)!=6 && (uint32_t)(millis()-id(pc_last_activity_ms))>=60000;
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(pc_prio_pending);'
+                then:
+                  - script.execute: pc_prio_commit
+            - if:
+                condition:
+                  lambda: 'return id(pc_color_pending);'
+                then:
+                  - script.execute: pc_color_commit
+            - if:
+                condition:
+                  lambda: 'return id(pc_auto_pending);'
+                then:                  - script.execute: pc_auto_settings_commit
+            - lambda: |-
+                id(pc_prio_edit_slot)=-1;
+                id(pc_color_edit_slot)=-1;
+                id(pc_auto_edit)=-1;
+                id(pc_page)=0;
+                id(pc_home_selection_explicit)=false;
+                id(pc_last_activity_ms)=millis();
+                id(pc_dirty)=true;
+            - lvgl.page.show:
+                id: power_page
+                animation: NONE
+            - script.execute: pc_refresh
+            - script.execute: pc_status_refresh
+
+lvgl:
+  id: pc_lvgl
+  displays:
+    - main_display
+  touchscreens:
+    - knob_touch
+  log_level: WARN
+  color_depth: 16
+  # Buffer moderato: nessun canvas a pieno schermo da allocare.
+  buffer_size: 25%
+  on_boot:
+    then:
+      - lvgl.page.show:
+          id: boot_page
+          animation: NONE
+      - lambda: |-
+          id(pc_boot_start_ms) = millis();
+          id(pc_boot_ticker_x) = 320;
+          id(pc_boot_active) = true;
+          id(pc_boot_ui_ready) = true;
+          id(pc_boot_progress_last) = -1;
+          id(pc_boot_step_last) = -1;
+          id(pc_boot_ready_ms) = 0;
+          id(pc_boot_handoff_pending) = false;
+          // Precalcola la larghezza reale del testo per il ticker.
+          lv_obj_update_layout(id(pc_boot_ticker));
+  pages:
+    # Prima pagina: si vede subito quando LVGL si inizializza.
+    - id: boot_page
+      skip: true
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      widgets:
+        - label:
+            text: "HackMyHome"
+            align: TOP_MID
+            y: 32
+            text_font: montserrat_28
+            text_color: 0x38BDF8
+            clickable: false
+        - label:
+            text: "POWER CONTROL"
+            align: TOP_MID
+            y: 76
+            text_font: montserrat_20
+            text_color: 0xE2E8F0
+            clickable: false
+        - label:
+            text: "I TUOI DISPOSITIVI"
+            align: TOP_MID
+            y: 113
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        # Finestra di ritaglio: una sola label scorre da destra a sinistra.
+        - obj:
+            x: 18
+            y: 138
+            width: 324
+            height: 44
+            bg_color: 0x0F172A
+            border_width: 0
+            radius: 13
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            widgets:
+              - label:
+                  id: pc_boot_ticker
+                  x: 320
+                  y: 11
+                  text: "LAVATRICE   /   LAVASTOVIGLIE   /   MACCHINA CAFFE   /   FORNO   /   CLIMATIZZATORE   /   FRIGORIFERO   /   COLONNA SALA   /   RICARICA AUTO   /   "
+                  text_font: montserrat_18
+                  text_color: 0x38BDF8
+                  clickable: false
+        - label:
+            id: pc_boot_status
+            align: CENTER
+            y: 26
+            text: "AVVIO POWER CONTROL..."
+            text_font: montserrat_14
+            text_color: 0xE2E8F0
+            clickable: false
+        - bar:
+            id: pc_boot_progress
+            x: 43
+            y: 244
+            width: 274
+            height: 12
+            min_value: 0
+            max_value: 100
+            value: 0
+            radius: 6
+            bg_color: 0x1E293B
+            indicator:
+              bg_color: 0x22C55E
+            clickable: false
+        - label:
+            id: pc_boot_wifi_label
+            x: 32
+            y: 283
+            text: "WIFI ..."
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            id: pc_boot_api_label
+            x: 139
+            y: 283
+            text: "API ..."
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            id: pc_boot_data_label
+            x: 247
+            y: 283
+            text: "DATI ..."
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            align: BOTTOM_MID
+            y: -27
+            text: "WIFI  /  HOME ASSISTANT  /  CONSUMI"
+            text_font: montserrat_12
+            text_color: 0x64748B
+            clickable: false
+
+    - id: power_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      on_swipe_left:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - script.execute: pc_prio_enter
+          - lvgl.page.show:
+              id: setup_page
+              animation: NONE
+          - script.execute: pc_refresh
+      widgets:
+        - arc:
+            id: pc_outer_arc
+            x: 12
+            y: 12
+            width: 336
+            height: 336
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 45
+            adjustable: false
+            arc_width: 14
+            arc_color: 0x1E293B
+            arc_rounded: false
+            clickable: false
+            indicator:
+              arc_width: 14
+              arc_opa: TRANSP
+              arc_rounded: false
+        # Anello esterno a 3 settori progressivi, stesso centro e spessore.
+        # 135° -> 356° (0..2700W), 356° -> 37° (2700..3200W),
+        # 37° -> 45° (3200..3300W). La base resta sempre grigia.
+        - arc:
+            id: pc_outer_green
+            x: 12
+            y: 12
+            width: 336
+            height: 336
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 356
+            adjustable: false
+            arc_width: 14
+            arc_opa: TRANSP
+            arc_rounded: false
+            clickable: false
+            indicator:
+              arc_width: 14
+              arc_color: 0x22C55E
+              arc_rounded: false
+        - arc:
+            id: pc_outer_yellow
+            x: 12
+            y: 12
+            width: 336
+            height: 336
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 356
+            end_angle: 37
+            adjustable: false
+            arc_width: 14
+            arc_opa: TRANSP
+            arc_rounded: false
+            clickable: false
+            indicator:
+              arc_width: 14
+              arc_color: 0xFFD166
+              arc_rounded: false
+        - arc:
+            id: pc_outer_red
+            x: 12
+            y: 12
+            width: 336
+            height: 336
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 37
+            end_angle: 45
+            adjustable: false
+            arc_width: 14
+            arc_opa: TRANSP
+            arc_rounded: false
+            clickable: false
+            indicator:
+              arc_width: 14
+              arc_color: 0xFF4038
+              arc_rounded: false
+        # Anello sottile fra totale e composizione: segmento selezionato.
+        - arc:
+            id: pc_selected_arc
+            x: 27
+            y: 27
+            width: 306
+            height: 306
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 5
+            arc_rounded: false
+            arc_color: 0x38BDF8
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        # Composizione in 15 segmenti: 14 elettrodomestici + Altro.
+        # Il loro arco PRINCIPALE (non l'indicatore) forma il donut.
+        - arc:
+            id: pc_seg_01
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_02
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_03
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_04
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_05
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_06
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_07
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_08
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_09
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_10
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_11
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_12
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_13
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_14
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - arc:
+            id: pc_seg_other
+            x: 42
+            y: 42
+            width: 276
+            height: 276
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 136
+            adjustable: false
+            arc_width: 18
+            arc_rounded: false
+            arc_color: 0x64748B
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+        - label:
+            id: pc_total_label
+            align: CENTER
+            y: -32
+            text: "-- W"
+            text_font: montserrat_48
+            text_color: 0xFFFFFF
+            clickable: false
+        - label:
+            id: pc_selected_name
+            align: CENTER
+            y: 21
+            text: "Elettrodomestico"
+            text_font: montserrat_18
+            text_color: 0x38BDF8
+            clickable: false
+        - label:
+            id: pc_selected_power
+            align: CENTER
+            y: 46
+            text: "-- W"
+            text_font: montserrat_18
+            text_color: 0xCBD5E1
+            clickable: false
+        - label:
+            id: pc_note
+            align: CENTER
+            y: 77
+            text: "GRIGIO = ALTRI CONSUMI"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            id: pc_home_title
+            text: "CONTROLLO CASA"
+            align: BOTTOM_MID
+            y: -68
+            text_font: montserrat_18
+            text_color: 0xE2E8F0
+            clickable: false
+        # Piccola barra di stato sotto al titolo e nel vuoto inferiore dei gauge.
+        # BATTERIA: contorno, punta e riempimento indipendente (GPIO1).
+        - obj:
+            id: pc_battery_body
+            x: 66
+            y: 309
+            width: 22
+            height: 14
+            bg_opa: TRANSP
+            border_width: 2
+            border_color: 0x94A3B8
+            radius: 3
+            clickable: false
+        - obj:
+            x: 89
+            y: 313
+            width: 3
+            height: 6
+            bg_color: 0x94A3B8
+            border_width: 0
+            radius: 1
+            clickable: false
+        - obj:
+            id: pc_battery_fill
+            x: 70
+            y: 313
+            width: 1
+            height: 6
+            bg_color: 0x94A3B8
+            border_width: 0
+            radius: 1
+            clickable: false
+        - label:
+            id: pc_battery_text
+            x: 98
+            y: 305
+            text: "--%"
+            text_font: montserrat_14
+            text_color: 0x94A3B8
+            clickable: false
+        # WIFI: tre barre (1=debole, 3=forte) con percentuale orientativa RSSI.
+        - obj:
+            id: pc_wifi_bar_1
+            x: 151
+            y: 317
+            width: 4
+            height: 6
+            radius: 1
+            border_width: 0
+            bg_color: 0x475569
+            clickable: false
+        - obj:
+            id: pc_wifi_bar_2
+            x: 158
+            y: 313
+            width: 4
+            height: 10
+            radius: 1
+            border_width: 0
+            bg_color: 0x475569
+            clickable: false
+        - obj:
+            id: pc_wifi_bar_3
+            x: 165
+            y: 309
+            width: 4
+            height: 14
+            radius: 1
+            border_width: 0
+            bg_color: 0x475569
+            clickable: false
+        - label:
+            id: pc_wifi_text
+            x: 175
+            y: 305
+            text: "--%"
+            text_font: montserrat_14
+            text_color: 0xCBD5E1
+            clickable: false
+        # HA: badge + pallino verde se API con sottoscrizione attiva, rosso altrimenti.
+        - obj:
+            x: 246
+            y: 305
+            width: 30
+            height: 20
+            bg_color: 0x1E293B
+            radius: 8
+            border_width: 0
+            clickable: false
+            widgets:
+              - label:
+                  id: pc_ha_text
+                  align: CENTER
+                  text: "HA"
+                  text_font: montserrat_14
+                  text_color: 0xEF4444
+                  clickable: false
+        - obj:
+            id: pc_ha_dot
+            x: 281
+            y: 310
+            width: 10
+            height: 10
+            bg_color: 0xEF4444
+            border_width: 0
+            radius: 5
+            clickable: false
+
+    - id: setup_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      on_swipe_right:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - if:
+              condition:
+                lambda: 'return id(pc_prio_pending);'
+              then:
+                - script.execute: pc_prio_commit
+          - lambda: 'id(pc_prio_edit_slot)=-1; id(pc_page)=0; id(pc_home_selection_explicit)=false;'
+          - lvgl.page.show: power_page
+          - script.execute: pc_refresh
+      on_swipe_left:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - if:
+              condition:
+                lambda: 'return id(pc_prio_pending);'
+              then:
+                - script.execute: pc_prio_commit
+          - lambda: 'id(pc_prio_edit_slot)=-1; id(pc_page)=2;'
+          - lvgl.page.show: appliances_page
+          - script.execute: pc_refresh
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 19
+            text: "DISTACCO"
+            text_font: montserrat_18
+            text_color: 0xE2E8F0
+            clickable: false
+        - label:
+            align: TOP_MID
+            y: 49
+            text: "PRIMI DA SPEGNERE IN ALTO"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            id: pc_prio_btn_0
+            x: 46
+            y: 83
+            width: 268
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 1
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_prio_select_row
+                    row: 0
+            widgets:
+              - label:
+                  id: pc_prio_row_0
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+                  clickable: false
+              - label:
+                  id: pc_prio_badge_0
+                  align: RIGHT_MID
+                  x: -10
+                  text: "NO AUTO"
+                  text_font: montserrat_12
+                  text_color: 0xFCA5A5
+                  clickable: false
+        - button:
+            id: pc_prio_btn_1
+            x: 46
+            y: 130
+            width: 268
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 1
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_prio_select_row
+                    row: 1
+            widgets:
+              - label:
+                  id: pc_prio_row_1
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+                  clickable: false
+              - label:
+                  id: pc_prio_badge_1
+                  align: RIGHT_MID
+                  x: -10
+                  text: "NO AUTO"
+                  text_font: montserrat_12
+                  text_color: 0xFCA5A5
+                  clickable: false
+        - button:
+            id: pc_prio_btn_2
+            x: 46
+            y: 177
+            width: 268
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 1
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_prio_select_row
+                    row: 2
+            widgets:
+              - label:
+                  id: pc_prio_row_2
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+                  clickable: false
+              - label:
+                  id: pc_prio_badge_2
+                  align: RIGHT_MID
+                  x: -10
+                  text: "NO AUTO"
+                  text_font: montserrat_12
+                  text_color: 0xFCA5A5
+                  clickable: false
+        - button:
+            id: pc_prio_btn_3
+            x: 46
+            y: 224
+            width: 268
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 1
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_prio_select_row
+                    row: 3
+            widgets:
+              - label:
+                  id: pc_prio_row_3
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+                  clickable: false
+              - label:
+                  id: pc_prio_badge_3
+                  align: RIGHT_MID
+                  x: -10
+                  text: "NO AUTO"
+                  text_font: montserrat_12
+                  text_color: 0xFCA5A5
+                  clickable: false
+        - label:
+            id: pc_prio_hint
+            align: TOP_MID
+            y: 267
+            text: "RUOTA: SCORRI | TOCCA: SPOSTA"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            id: pc_prio_countdown
+            align: TOP_MID
+            y: 286
+            text: " "
+            text_font: montserrat_12
+            text_color: 0x22C55E
+            clickable: false
+
+    # Conferma ESPLICITA: nessun salvataggio di modalita' con timer.
+    - id: pc_prio_prompt_page
+      skip: true
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      widgets:
+        - label:
+            id: pc_prio_prompt_title
+            align: TOP_MID
+            y: 45
+            text: "ESCLUDERE?"
+            text_font: montserrat_24
+            text_color: 0xF8FAFC
+            clickable: false
+        - label:
+            id: pc_prio_prompt_name
+            align: CENTER
+            y: -36
+            text: "DISPOSITIVO"
+            text_font: montserrat_20
+            text_color: 0x38BDF8
+            clickable: false
+        - label:
+            id: pc_prio_prompt_explain
+            align: CENTER
+            y: 9
+            text: "NON SPEGNERE IN AUTO"
+            text_font: montserrat_14
+            text_color: 0xCBD5E1
+            clickable: false
+        - button:
+            x: 59
+            y: 224
+            width: 108
+            height: 48
+            bg_color: 0x334155
+            radius: 14
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_prio_prompt_answer
+                    accept: false
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "NO"
+                  text_font: montserrat_20
+                  clickable: false
+        - button:
+            x: 193
+            y: 224
+            width: 108
+            height: 48
+            bg_color: 0x047857
+            radius: 14
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_prio_prompt_answer
+                    accept: true
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "SI"
+                  text_font: montserrat_20
+                  clickable: false
+        - label:
+            align: BOTTOM_MID
+            y: -39
+            text: "SCEGLI SI O NO"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+
+    - id: appliances_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      on_swipe_right:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - script.execute: pc_prio_enter
+          - lvgl.page.show:
+              id: setup_page
+              animation: NONE
+          - script.execute: pc_refresh
+      on_swipe_left:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - script.execute: pc_color_enter
+          - lvgl.page.show:
+              id: colors_page
+              animation: NONE
+          - script.execute: pc_refresh
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 30
+            text: "ELETTRODOMESTICI"
+            text_font: montserrat_18
+            text_color: 0x94A3B8
+            clickable: false
+        - label:
+            id: pc_device_name
+            align: CENTER
+            y: -92
+            text: "--"
+            text_font: montserrat_24
+            text_color: 0x38BDF8
+            clickable: false
+        - label:
+            id: pc_device_power
+            align: CENTER
+            y: -45
+            text: "-- W"
+            text_font: montserrat_36
+            text_color: 0xFFFFFF
+            clickable: false
+        - label:
+            id: pc_device_priority
+            align: CENTER
+            y: -8
+            text: "PRIORITA' --"
+            text_font: montserrat_14
+            text_color: 0xCBD5E1            clickable: false
+        - label:
+            id: pc_control_type
+            align: CENTER
+            y: 22
+            text: "--"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            x: 75
+            y: 221
+            width: 95
+            height: 40
+            bg_color: 0x065F46
+            radius: 16
+            on_long_press:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - if:
+                    condition:
+                      lambda: |-
+                        if (id(pc_ota)) return false;
+                        const char *controls[14] = {
+                          "${appliance_01_switch}",
+                          "${appliance_02_switch}",
+                          "${appliance_03_switch}",
+                          "${appliance_04_switch}",
+                          "${appliance_05_switch}",
+                          "${appliance_06_switch}",
+                          "${appliance_07_switch}",
+                          "${appliance_08_switch}",
+                          "${appliance_09_switch}",
+                          "${appliance_10_switch}",
+                          "${appliance_11_switch}",
+                          "${appliance_12_switch}",
+                          "${appliance_13_switch}",
+                          "${appliance_14_switch}"
+                        };
+                        return controls[id(pc_selected)][0] != '\0' &&
+                               strncmp(controls[id(pc_selected)], "switch.pc_non_configurato_", 26) != 0;
+                    then:
+                      - homeassistant.action:
+                          action: !lambda |-
+                            const char *controls[14] = {
+                              "${appliance_01_switch}",
+                              "${appliance_02_switch}",
+                              "${appliance_03_switch}",
+                              "${appliance_04_switch}",
+                              "${appliance_05_switch}",
+                              "${appliance_06_switch}",
+                              "${appliance_07_switch}",
+                              "${appliance_08_switch}",
+                              "${appliance_09_switch}",
+                              "${appliance_10_switch}",
+                              "${appliance_11_switch}",
+                              "${appliance_12_switch}",
+                              "${appliance_13_switch}",
+                              "${appliance_14_switch}"
+                            };
+                            return std::string(strncmp(controls[id(pc_selected)],"climate.",8)==0 ? "climate.turn_on" : "switch.turn_on");
+                          data_template:
+                            entity_id: "{{ target_entity }}"
+                          variables:
+                            target_entity: !lambda |-
+                              const char *controls[14] = {
+                                "${appliance_01_switch}",
+                                "${appliance_02_switch}",
+                                "${appliance_03_switch}",
+                                "${appliance_04_switch}",
+                                "${appliance_05_switch}",
+                                "${appliance_06_switch}",
+                                "${appliance_07_switch}",
+                                "${appliance_08_switch}",
+                                "${appliance_09_switch}",
+                                "${appliance_10_switch}",
+                                "${appliance_11_switch}",
+                                "${appliance_12_switch}",
+                                "${appliance_13_switch}",
+                                "${appliance_14_switch}"
+                              };
+                              return std::string(controls[id(pc_selected)]);
+            widgets:
+              - label:
+                  text: "ACCENDI"
+                  align: CENTER
+                  text_font: montserrat_14
+        - button:
+            x: 190
+            y: 221
+            width: 95
+            height: 40
+            bg_color: 0x7F1D1D
+            radius: 16
+            on_long_press:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - if:
+                    condition:
+                      lambda: |-
+                        if (id(pc_ota)) return false;
+                        const char *controls[14] = {
+                          "${appliance_01_switch}",
+                          "${appliance_02_switch}",
+                          "${appliance_03_switch}",
+                          "${appliance_04_switch}",
+                          "${appliance_05_switch}",
+                          "${appliance_06_switch}",
+                          "${appliance_07_switch}",
+                          "${appliance_08_switch}",
+                          "${appliance_09_switch}",
+                          "${appliance_10_switch}",
+                          "${appliance_11_switch}",
+                          "${appliance_12_switch}",
+                          "${appliance_13_switch}",
+                          "${appliance_14_switch}"
+                        };
+                        return controls[id(pc_selected)][0] != '\0' &&
+                               strncmp(controls[id(pc_selected)], "switch.pc_non_configurato_", 26) != 0;
+                    then:
+                      - homeassistant.action:
+                          action: !lambda |-
+                            const char *controls[14] = {
+                              "${appliance_01_switch}",
+                              "${appliance_02_switch}",
+                              "${appliance_03_switch}",
+                              "${appliance_04_switch}",
+                              "${appliance_05_switch}",
+                              "${appliance_06_switch}",
+                              "${appliance_07_switch}",
+                              "${appliance_08_switch}",
+                              "${appliance_09_switch}",
+                              "${appliance_10_switch}",
+                              "${appliance_11_switch}",
+                              "${appliance_12_switch}",
+                              "${appliance_13_switch}",
+                              "${appliance_14_switch}"
+                            };
+                            return std::string(strncmp(controls[id(pc_selected)],"climate.",8)==0 ? "climate.turn_off" : "switch.turn_off");
+                          data_template:
+                            entity_id: "{{ target_entity }}"
+                          variables:
+                            target_entity: !lambda |-
+                              const char *controls[14] = {
+                                "${appliance_01_switch}",
+                                "${appliance_02_switch}",
+                                "${appliance_03_switch}",
+                                "${appliance_04_switch}",
+                                "${appliance_05_switch}",
+                                "${appliance_06_switch}",
+                                "${appliance_07_switch}",
+                                "${appliance_08_switch}",
+                                "${appliance_09_switch}",
+                                "${appliance_10_switch}",
+                                "${appliance_11_switch}",
+                                "${appliance_12_switch}",
+                                "${appliance_13_switch}",
+                                "${appliance_14_switch}"
+                              };
+                              return std::string(controls[id(pc_selected)]);
+            widgets:
+              - label:
+                  text: "SPEGNI"
+                  align: CENTER
+                  text_font: montserrat_14
+
+    - id: colors_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      on_swipe_left:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - if:
+              condition:
+                lambda: 'return id(pc_color_pending);'
+              then:
+                - script.execute: pc_color_commit
+          - lambda: 'id(pc_color_edit_slot)=-1;'
+          - script.execute: pc_auto_settings_enter
+          - lvgl.page.show:
+              id: pc_auto_settings_page
+              animation: NONE
+          - script.execute: pc_refresh
+      on_swipe_right:
+        then:
+          - lambda: 'id(pc_last_activity_ms)=millis();'
+          - if:
+              condition:
+                lambda: 'return id(pc_color_pending);'
+              then:
+                - script.execute: pc_color_commit
+          - lambda: 'id(pc_color_edit_slot)=-1; id(pc_page)=2;'
+          - lvgl.page.show:
+              id: appliances_page
+              animation: NONE
+          - script.execute: pc_refresh
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 19
+            text: "COLORI"
+            text_font: montserrat_18
+            text_color: 0xE2E8F0
+            clickable: false
+        - label:
+            id: pc_color_hint
+            align: TOP_MID
+            y: 49
+            text: "RUOTA: SCORRI | TOCCA: MODIFICA"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            id: pc_color_btn_0
+            x: 56
+            y: 83
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_color_select_row
+                    row: 0
+            widgets:
+              - label:
+                  id: pc_color_row_0
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_color_btn_1
+            x: 56
+            y: 129
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_color_select_row
+                    row: 1
+            widgets:
+              - label:
+                  id: pc_color_row_1
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_color_btn_2
+            x: 56
+            y: 175
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_color_select_row
+                    row: 2
+            widgets:
+              - label:
+                  id: pc_color_row_2
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_color_btn_3
+            x: 56
+            y: 221
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - lambda: 'id(pc_last_activity_ms)=millis();'
+                - script.execute:
+                    id: pc_color_select_row
+                    row: 3
+            widgets:
+              - label:
+                  id: pc_color_row_3
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - label:
+            id: pc_color_countdown
+            align: TOP_MID
+            y: 286
+            text: " "
+            text_font: montserrat_12
+            text_color: 0x22C55E
+            clickable: false
+
+    # Configurazione distacco e soglia apprendimento. Swipe destro torna ai colori.
+    - id: pc_auto_settings_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      on_swipe_right:
+        then:
+          - if:
+              condition:
+                lambda: 'return id(pc_auto_pending);'
+              then:
+                - script.execute: pc_auto_settings_commit
+          - lambda: |-
+              id(pc_auto_edit)=-1;
+              id(pc_page)=3;
+              id(pc_last_activity_ms)=millis();
+          - script.execute: pc_color_enter
+          - lvgl.page.show:
+              id: colors_page
+              animation: NONE
+          - script.execute: pc_refresh
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 19
+            text: "IMPOSTAZIONI"
+            text_font: montserrat_18
+            text_color: 0xE2E8F0
+            clickable: false
+        - label:
+            id: pc_auto_hint
+            align: TOP_MID
+            y: 49
+            text: "RUOTA: SCORRI | TOCCA: MODIFICA"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            id: pc_auto_btn_0
+            x: 56
+            y: 83
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_auto_settings_select_row
+                    row: 0
+            widgets:
+              - label:
+                  id: pc_auto_row_0
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_auto_btn_1
+            x: 56
+            y: 129
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_auto_settings_select_row
+                    row: 1
+            widgets:
+              - label:
+                  id: pc_auto_row_1
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_auto_btn_2
+            x: 56
+            y: 175
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_auto_settings_select_row
+                    row: 2
+            widgets:
+              - label:
+                  id: pc_auto_row_2
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            id: pc_auto_btn_3
+            x: 56
+            y: 221
+            width: 248
+            height: 37
+            bg_color: 0x0F172A
+            border_color: 0x334155
+            border_width: 2
+            radius: 12
+            pad_all: 0
+            on_click:
+              then:
+                - script.execute:
+                    id: pc_auto_settings_select_row
+                    row: 3
+            widgets:
+              - label:
+                  id: pc_auto_row_3
+                  align: LEFT_MID
+                  x: 12
+                  text: "--"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+
+    # Pagina modale: nessun swipe. ANNULLA oppure qualunque rotazione.
+    - id: pc_confirm_page
+      skip: true
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 37
+            text: "DISTACCO IMMINENTE"
+            text_font: montserrat_18
+            text_color: 0xF8FAFC
+            clickable: false
+        - label:
+            id: pc_auto_zone_label
+            align: TOP_MID
+            y: 74
+            text: "ZONA ROSSA"
+            text_font: montserrat_18
+            text_color: 0xFF4038
+            clickable: false
+        - label:
+            id: pc_auto_candidate_label
+            align: CENTER
+            y: -29
+            text: "CARICO"
+            text_font: montserrat_20
+            text_color: 0xE2E8F0
+            clickable: false
+        - label:
+            id: pc_auto_seconds_label
+            align: CENTER
+            y: 20
+            text: "12 s"
+            text_font: montserrat_48
+            text_color: 0xFFFFFF
+            clickable: false
+        - button:
+            x: 83
+            y: 235
+            width: 194
+            height: 50
+            bg_color: 0xB91C1C
+            border_width: 0
+            radius: 16
+            on_click:
+              then:
+                - script.execute: pc_auto_cancel
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "ANNULLA"
+                  text_font: montserrat_20
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - label:
+            align: BOTTOM_MID
+            y: -37
+            text: "O RUOTA LA MANOPOLA"
+            text_font: montserrat_14
+            text_color: 0xCBD5E1
+            clickable: false
+
+    # DOMANDA APPRENDIMENTO (solo interazione, nessun interruttore fisico).
+    - id: pc_learn_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 21
+            text: "NUOVO CARICO"
+            text_font: montserrat_18
+            text_color: 0xFBBF24
+            clickable: false
+        - label:
+            id: pc_learn_watt_label
+            align: TOP_MID
+            y: 50
+            text: "+0 W"
+            text_font: montserrat_28
+            text_color: 0xFFFFFF
+            clickable: false
+        - label:
+            align: TOP_MID
+            y: 93
+            text: "COSA HAI ACCESO?"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            id: pc_learn_device_btn
+            x: 30
+            y: 115
+            width: 300
+            height: 54
+            bg_color: 0x172F48
+            border_width: 2
+            border_color: 0x38BDF8
+            radius: 12
+            on_click:
+              then:
+                - lambda: |-
+                    id(pc_last_activity_ms)=millis();
+                    id(pc_learn_edit_stage)=0;
+                    id(pc_learn_device_idx)=(id(pc_learn_device_idx)+1)%11;
+                    id(pc_learn_mode_idx)=0;
+                - script.execute: pc_learn_draw
+            widgets:
+              - label:
+                  id: pc_learn_device_label
+                  align: CENTER
+                  text: "Microonde"
+                  text_font: montserrat_18
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - label:
+            align: TOP_MID
+            y: 181
+            text: "COME LO STAI USANDO?"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+        - button:
+            id: pc_learn_mode_btn
+            x: 30
+            y: 201
+            width: 300
+            height: 51
+            bg_color: 0x172F48
+            border_width: 2
+            border_color: 0x334155
+            radius: 12
+            on_click:
+              then:
+                - lambda: |-
+                    id(pc_last_activity_ms)=millis();
+                    id(pc_learn_edit_stage)=1;
+                    id(pc_learn_mode_idx)=(id(pc_learn_mode_idx)+1)%std::max(1,id(pc_learn_mode_count));
+                - script.execute: pc_learn_draw
+            widgets:
+              - label:
+                  id: pc_learn_mode_label
+                  align: CENTER
+                  text: "Jet / Massima"
+                  text_font: montserrat_16
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            x: 45
+            y: 270
+            width: 120
+            height: 43
+            bg_color: 0x334155
+            radius: 13
+            on_click:
+              then:
+                - script.execute: pc_learn_close
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "IGNORA"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - button:
+            x: 185
+            y: 270
+            width: 130
+            height: 43
+            bg_color: 0x15803D
+            radius: 13
+            on_click:
+              then:
+                - script.execute: pc_learn_confirm
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "CONFERMA"
+                  text_font: montserrat_14
+                  text_color: 0xFFFFFF
+                  clickable: false
+        - label:
+            align: BOTTOM_MID
+            y: -26
+            text: "TOCCA LE RIGHE O RUOTA"
+            text_font: montserrat_12
+            text_color: 0x94A3B8
+            clickable: false
+
+    - id: ota_page
+      scrollable: false
+      bg_color: 0x020617
+      bg_opa: COVER
+      widgets:
+        - label:
+            align: CENTER
+            y: -77
+            text: "HackMyHome"
+            text_font: montserrat_28
+            text_color: 0x38BDF8
+            clickable: false
+        - label:
+            id: ota_status
+            align: CENTER
+            y: -34
+            text: "AGGIORNAMENTO OTA"
+            text_font: montserrat_18
+            clickable: false
+        - bar:
+            id: ota_bar
+            x: 60
+            y: 180
+            width: 240
+            height: 18
+            min_value: 0
+            max_value: 100
+            value: 0
+            bg_color: 0x1E293B
+            indicator:
+              bg_color: 0x22C55E
+            clickable: false
+        - label:
+            id: ota_percent_label
+            align: CENTER
+            y: 48
+            text: "0%"
+            text_font: montserrat_36
+            clickable: false
