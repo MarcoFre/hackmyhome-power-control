@@ -1,9 +1,6 @@
 name: Publish v0.22.4
 
 on:
-  push:
-    paths:
-      - ".github/workflows/publish-v0.22.4.yml"
   workflow_dispatch:
 
 permissions:
@@ -15,32 +12,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set repository description
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}" \
-            -f description='Home Assistant + ESPHome energy management and load-shedding console for the Waveshare ESP32-S3 1.8" Knob Touch LCD.'
-
-      - name: Set repository topics
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method PUT "repos/${GITHUB_REPOSITORY}/topics" \
-            -H "Accept: application/vnd.github+json" \
-            -f names[]='home-assistant' \
-            -f names[]='esphome' \
-            -f names[]='esp32-s3' \
-            -f names[]='waveshare' \
-            -f names[]='smart-home' \
-            -f names[]='energy-monitoring' \
-            -f names[]='load-shedding' \
-            -f names[]='lvgl' \
-            -f names[]='iot' \
-            -f names[]='hackmyhome'
 
       - name: Create GitHub Release
         env:
