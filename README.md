@@ -16,7 +16,7 @@ Il progetto trasforma il Knob in una console portatile per:
 > **Stato del progetto: in sviluppo / beta.** Il firmware è stato testato nella configurazione HackMyHome, ma può richiedere adattamenti alla propria installazione.
 
 <p align="center">
-  <img src="images/power-control-home.jpg" alt="HackMyHome Power Control - dashboard principale" width="520">
+  <img src="images/power-control-home.svg" alt="HackMyHome Power Control - dashboard principale" width="520">
 </p>
 
 ## Hardware
@@ -58,9 +58,9 @@ Il firmware usa il driver DRV2605 e il motore aptico integrato nel Knob per segn
 
 | Dashboard | Priorità di distacco |
 | --- | --- |
-| <img src="images/power-control-home.jpg" alt="Dashboard consumi Power Control" width="360"> | <img src="images/power-control-priorities.jpg" alt="Priorità di distacco Power Control" width="360"> |
+| <img src="images/power-control-home.svg" alt="Dashboard consumi Power Control" width="360"> | <img src="images/power-control-priorities.svg" alt="Priorità di distacco Power Control" width="360"> |
 | **Elettrodomestici** | **Apprendimento carichi** |
-| <img src="images/power-control-appliances.jpg" alt="Gestione elettrodomestici Power Control" width="360"> | <img src="images/power-control-learning.jpg" alt="Apprendimento nuovo carico Power Control" width="360"> |
+| <img src="images/power-control-appliances.svg" alt="Gestione elettrodomestici Power Control" width="360"> | <img src="images/power-control-learning.svg" alt="Apprendimento nuovo carico Power Control" width="360"> |
 
 Le immagini mostrano le principali schermate dell'interfaccia utilizzata nel progetto HackMyHome. Nomi, potenze, colori e dispositivi dipendono dalla configurazione della propria installazione Home Assistant.
 
