@@ -1,5 +1,10 @@
 # HackMyHome Power Control
 
+[![Release](https://img.shields.io/github/v/release/MarcoFre/hackmyhome-power-control?label=release)](https://github.com/MarcoFre/hackmyhome-power-control/releases/latest)
+[![License](https://img.shields.io/github/license/MarcoFre/hackmyhome-power-control)](LICENSE)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41BDF5)](https://www.home-assistant.io/)
+[![ESPHome](https://img.shields.io/badge/ESPHome-ESP32--S3-000000)](https://esphome.io/)
+
 Power Control per **Home Assistant + ESPHome**, realizzato per il **Waveshare ESP32-S3 1.8" Knob Touch LCD**.
 
 Il progetto trasforma il Knob in una console portatile per:
@@ -13,7 +18,7 @@ Il progetto trasforma il Knob in una console portatile per:
 - apprendere i profili di consumo di carichi non monitorati direttamente da Home Assistant;
 - ricevere feedback aptico tramite il motore integrato.
 
-> **Stato del progetto: in sviluppo / beta.** Il firmware è stato testato nella configurazione HackMyHome, ma può richiedere adattamenti alla propria installazione.
+> **Versione pubblica corrente: v0.22.4 · Stato del progetto: in sviluppo / beta.** Il firmware è stato testato nella configurazione HackMyHome, ma può richiedere adattamenti alla propria installazione.
 
 <p align="center">
   <img src="images/power-control-home.svg" alt="HackMyHome Power Control - dashboard principale" width="520">
@@ -63,6 +68,10 @@ Il firmware usa il driver DRV2605 e il motore aptico integrato nel Knob per segn
 | <img src="images/power-control-appliances.svg" alt="Gestione elettrodomestici Power Control" width="360"> | <img src="images/power-control-learning.svg" alt="Apprendimento nuovo carico Power Control" width="360"> |
 
 Le immagini mostrano le principali schermate dell'interfaccia utilizzata nel progetto HackMyHome. Nomi, potenze, colori e dispositivi dipendono dalla configurazione della propria installazione Home Assistant.
+
+## Release
+
+La release pubblica corrente è **[v0.22.4](https://github.com/MarcoFre/hackmyhome-power-control/releases/tag/v0.22.4)**. GitHub mette a disposizione automaticamente anche gli archivi ZIP e TAR.GZ del sorgente associato alla release.
 
 ## Installazione rapida
 
