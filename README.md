@@ -25,10 +25,10 @@ Il progetto trasforma il Knob in una console portatile per:
 
 ### Link hardware
 
-- [Amazon - Waveshare ESP32-S3 Knob Touch LCD 1.8" (link affiliato HackMyHome)](https://amzn.to/4duLnAk)
+- [Amazon - Waveshare ESP32-S3 Knob Touch LCD 1.8"](https://amzn.to/4duLnAk)
 - [Waveshare - ESP32-S3 Knob Touch LCD 1.8"](https://www.waveshare.com/esp32-s3-knob-touch-lcd-1.8.htm)
 
-Usando il link affiliato Amazon puoi sostenere HackMyHome senza costi aggiuntivi per te. Prezzi e disponibilità possono cambiare nel tempo.
+Usando il link affiliato puoi sostenere HackMyHome senza costi aggiuntivi per te. Prezzi e disponibilità possono cambiare nel tempo.
 
 ## Funzioni principali
 
